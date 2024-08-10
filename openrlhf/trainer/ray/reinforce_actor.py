@@ -4,37 +4,33 @@ import os
 import socket
 from copy import deepcopy
 from typing import Callable, Dict, List, Tuple
-# from torch.optim import 
+
 import deepspeed
 from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LambdaLR, ReduceLROnPlateau
 
 import ray
-from functools import partial
 import torch
 from transformers.trainer import get_scheduler
 
 from openrlhf.datasets import PromptDataset, SFTDataset
 from openrlhf.models import Actor
-from openrlhf.trainer import PPOTrainer
-# from openrlhf.trainer.ppo_utils import Experience, RemoteExperienceMakerPPO as RemoteExperienceMaker
-from openrlhf.trainer.ppo_utils import Experience
-from openrlhf.trainer.ppo_utils import RemoteExperienceMakerPPO as RemoteExperienceMaker
+# from openrlhf.trainer import PPOTrainer
+from openrlhf.trainer import ReinforceTrainer
+from openrlhf.trainer.ppo_utils import Experience, RemoteExperienceMakerReinforce as RemoteExperienceMaker
 from openrlhf.utils import DeepspeedStrategy, blending_datasets, get_tokenizer
 from openrlhf.utils.deepspeed_utils import _z3_params_to_fetch
 from openrlhf.utils.distributed_util import init_process_group
+from openrlhf.trainer.ppo_utils.global_envs import RUNTIME_ENV
 
 from .launcher import BasePPORole
 from .utils import get_cosine_schedule_with_warmup
 
 
-class ActorPPOTrainer(PPOTrainer):
+class ActorReinforceTrainer(ReinforceTrainer):
     def __init__(
         self,
         *args,
         vllm_engines: List = None,
-        critic_train_remote: bool = False,
         **kwargs,
     ):
         """PPOTrainer for ray.
@@ -45,11 +41,10 @@ class ActorPPOTrainer(PPOTrainer):
         """
         super().__init__(*args, **kwargs)
         self.vllm_engines = vllm_engines
-        self.critic_train_remote = critic_train_remote
 
         self.experience_maker = RemoteExperienceMaker(
             self.actor,
-            self.critic,
+            None,
             self.reward_model,
             self.initial_model,
             self.tokenizer,
@@ -85,7 +80,6 @@ class ActorPPOTrainer(PPOTrainer):
                 self.strategy.args.vllm_tensor_parallel_size,
             )
             world_size = vllm_num_engines * vllm_tensor_parallel_size + 1
-            
             refs = [
                 engine.init_process_group.remote(
                     master_address, master_port, i * vllm_tensor_parallel_size + 1, world_size, "vllm"
@@ -104,17 +98,17 @@ class ActorPPOTrainer(PPOTrainer):
 
         torch.distributed.barrier()
 
-    def ppo_train(self, global_step):
+    def reinforce_train(self, global_step):
         # 1. ensure all experience makers done
         self.experience_maker.flush()
         torch.distributed.barrier()
 
         # 2. triger remote critic model training
-        if self.critic_train_remote:
-            critic_status_ref = self.critic.fit.remote()
+        # if self.critic_train_remote:
+            # critic_status_ref = self.critic.fit.remote()
 
         # 3. actor model training
-        status = super().ppo_train(global_step)
+        status = super().reinforce_train(global_step)
 
         # 4. broadcast weights to vllm engines
         if self.vllm_engines is not None:
@@ -122,14 +116,14 @@ class ActorPPOTrainer(PPOTrainer):
             self._broadcast_to_vllm()
 
         # 5. wait remote critic model training done
-        if self.critic_train_remote:
-            status.update(ray.get(critic_status_ref))
+        # if self.critic_train_remote:
+            # status.update(ray.get(critic_status_ref))
         torch.distributed.barrier()
 
         return status
 
-    def training_step(self, experience: Experience, frozen_step=False) -> Dict[str, float]:
-        return self.training_step_actor(experience, frozen_step=frozen_step)
+    def training_step(self, experience: Experience) -> Dict[str, float]:
+        return self.training_step_actor(experience)
 
     def _broadcast_to_vllm(self):
         torch.cuda.empty_cache()
@@ -157,56 +151,14 @@ class ActorPPOTrainer(PPOTrainer):
                     if torch.distributed.get_rank() == 0:
                         torch.distributed.broadcast(param.data, 0, group=self._model_update_group)
 
+    # def _broadcast_to_reference_model(self):
+    #     model = self.actor.model.module
 
 def _z3_params_to_fetch(param_list):
     return [
         p for p in param_list
         if hasattr(p, 'ds_id') and p.ds_status == ZeroParamStatus.NOT_AVAILABLE
     ]
-
-
-# def _get_cosine_schedule_with_warmup_lr_lambda(
-#     current_step: int, *, num_warmup_steps: int, num_training_steps: int, num_cycles: float, min_lr: float = 0.0
-# ):
-#     if current_step < num_warmup_steps:
-#         return float(current_step) / float(max(1, num_warmup_steps))
-#     progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
-#     return max(min_lr, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
-
-
-# def get_cosine_schedule_with_warmup(
-#     optimizer: Optimizer, num_warmup_steps: int, num_training_steps: int, num_cycles: float = 0.5, last_epoch: int = -1, min_lr: float = 0.0,
-# ):
-#     """
-#     Create a schedule with a learning rate that decreases following the values of the cosine function between the
-#     initial lr set in the optimizer to 0, after a warmup period during which it increases linearly between 0 and the
-#     initial lr set in the optimizer.
-
-#     Args:
-#         optimizer ([`~torch.optim.Optimizer`]):
-#             The optimizer for which to schedule the learning rate.
-#         num_warmup_steps (`int`):
-#             The number of steps for the warmup phase.
-#         num_training_steps (`int`):
-#             The total number of training steps.
-#         num_cycles (`float`, *optional*, defaults to 0.5):
-#             The number of waves in the cosine schedule (the defaults is to just decrease from the max value to 0
-#             following a half-cosine).
-#         last_epoch (`int`, *optional*, defaults to -1):
-#             The index of the last epoch when resuming training.
-
-#     Return:
-#         `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
-#     """
-
-#     lr_lambda = partial(
-#         _get_cosine_schedule_with_warmup_lr_lambda,
-#         num_warmup_steps=num_warmup_steps,
-#         num_training_steps=num_training_steps,
-#         num_cycles=num_cycles,
-#         min_lr=min_lr
-#     )
-#     return LambdaLR(optimizer, lr_lambda, last_epoch)
 
 
 @ray.remote(num_gpus=1)
@@ -221,18 +173,23 @@ class ActorModelRayActor(BasePPORole):
             lora_rank=strategy.args.lora_rank,
             lora_alpha=strategy.args.lora_alpha,
             target_modules=strategy.args.target_modules,
-            ds_config=strategy.get_ds_train_config(is_actor=True, activation_offload=getattr(strategy.args, "activation_offload", False)),
+            ds_config=strategy.get_ds_train_config(is_actor=True),
         )
 
         # configure tokenizer
         self.tokenizer_reward = get_tokenizer(strategy.args.reward_pretrain.split(",")[0], actor.model, "left", strategy)
-        
+
         self.tokenizer = get_tokenizer(pretrain, actor.model, "left", strategy)
-        
+
         strategy.print(actor)
         self.prepare_datasets()
 
         args = strategy.args
+
+        if args.enable_ema:
+            ema_model = deepcopy(actor)
+        else:
+            ema_model = None
 
         # configure optimizer
         actor_optim = strategy.create_optimizer(
@@ -240,12 +197,12 @@ class ActorModelRayActor(BasePPORole):
         )
 
         # configure scheduler
-        num_update_steps_per_episodes = len(self.prompts_dataloader) * (args.micro_rollout_batch_size / args.micro_train_batch_size) * args.max_epochs // strategy.accumulated_gradient
+        num_update_steps_per_episodes = len(self.prompts_dataloader) * args.max_epochs // strategy.accumulated_gradient
         max_steps = math.ceil(args.num_episodes * num_update_steps_per_episodes)
         self.max_steps = max_steps
 
         min_actor_learning_rate_lr = getattr(args, "min_actor_learning_rate_lr", 0.1)
-
+        
         if args.lr_scheduler_type == "cosine":
             actor_scheduler = get_cosine_schedule_with_warmup(actor_optim, num_warmup_steps=math.ceil(max_steps * 0.03), num_training_steps=max_steps, min_lr=min_actor_learning_rate_lr)
         else:
@@ -257,7 +214,7 @@ class ActorModelRayActor(BasePPORole):
             )
 
         # actor_scheduler = get_scheduler(
-        #     self.strategy.args.lr_scheduler_type,
+        #     "cosine",
         #     actor_optim,
         #     num_warmup_steps=math.ceil(max_steps * 0.03),
         #     num_training_steps=max_steps,
@@ -274,50 +231,12 @@ class ActorModelRayActor(BasePPORole):
             is_rlhf=True,
         )
 
-        self.past_global_step = 0
-
-        if strategy.args.load_ckpt:
-            ckpt_path = strategy.args.ckpt_path
-            exist_dirs = os.listdir(ckpt_path)
-            exist_dirs = [d for d in exist_dirs if "_actor_ckpt_" in d]
-
-            if len(exist_dirs) > 0:
-                exist_dirs = sorted(exist_dirs, key=lambda x:int(x[len("_actor_ckpt_global_step"):]),  reverse=True)
-
-                target_dir = os.path.join(ckpt_path, exist_dirs[0]) 
-                self.past_global_step = int(exist_dirs[0][len("_actor_ckpt_global_step"):])
-
-                strategy.load_ckpt(self.actor.model, load_dir=target_dir, load_lr_scheduler_states=True, load_optimizer_states=True, load_module_strict=True)
-            else:
-                print(f"************** failed to load ckpt from {ckpt_path} because no ckpt files found **************")
-
-
-        if args.enable_ema:
-            # ema_model = deepcopy(actor)
-            ema_model = Actor(
-                pretrain,
-                use_flash_attention_2=strategy.args.flash_attn,
-                bf16=strategy.args.bf16,
-                load_in_4bit=strategy.args.load_in_4bit,
-                # lora_rank=strategy.args.lora_rank,
-                # lora_alpha=strategy.args.lora_alpha,
-                # target_modules=strategy.args.target_modules,
-                ds_config=strategy.get_ds_eval_config(offload=True),
-                # ds_config=strategy.get_ds_eval_config()
-            )
-        else:
-            ema_model = None
-
         if ema_model:
             ema_model._offload = True
             self.ema_model = strategy.prepare(ema_model, is_rlhf=True)
             del ema_model._offload
         else:
             self.ema_model = None
-
-        self.strategy.args.past_global_steps = self.past_global_step
-
-        # self.reset_dataloader_state()
 
     def prepare_datasets(self):
         strategy = self.strategy
@@ -334,7 +253,7 @@ class ActorModelRayActor(BasePPORole):
         )
         prompts_data = prompts_data.select(range(min(args.max_samples, len(prompts_data))))
         prompts_dataset = PromptDataset(prompts_data, self.tokenizer, strategy, input_template=args.input_template)
-        self.prompts_dataloader = strategy.setup_dataloader(prompts_dataset, args.micro_rollout_batch_size, pin_memory=True, shuffle=False)
+        self.prompts_dataloader = strategy.setup_dataloader(prompts_dataset, args.micro_rollout_batch_size, True, True)
 
         if args.pretrain_data:
             pretrain_data = blending_datasets(
@@ -345,6 +264,7 @@ class ActorModelRayActor(BasePPORole):
                 return_eval=False,
             )
             pretrain_max_len = args.max_len if args.max_len else args.prompt_max_len + args.generate_max_len
+
             pretrain_dataset = SFTDataset(
                 pretrain_data.select(range(min(len(pretrain_data), args.max_epochs * len(prompts_dataset)))),
                 self.tokenizer,
@@ -352,83 +272,59 @@ class ActorModelRayActor(BasePPORole):
                 strategy,
                 pretrain_mode=True,
             )
+
             self.pretrain_dataloader = itertools.cycle(
                 iter(
                     strategy.setup_dataloader(
                         pretrain_dataset,
                         args.micro_train_batch_size,
-                        pin_memory=True,
-                        shuffle=False,
-                        collate_fn=pretrain_dataset.collate_fn,
+                        True,
+                        True,
+                        pretrain_dataset.collate_fn,
                     )
                 )
             )
         else:
             self.pretrain_dataloader = None
 
-    # def reset_dataloader_state(self):
-    #     if self.past_global_step > 0:
-    #         past_steps = self.past_global_step * self.strategy.args.rollout_batch_size / self.strategy.args.micro_rollout_batch_size / self.strategy.world_size
-            
-    #         _past_steps = int(past_steps)
-    #         # for _ in range(past_steps):
-    #         for batch in self.prompts_dataloader:
-    #             if _past_steps == 0:
-    #                 break
-    #             _past_steps -= 1
-            
-    #         _past_steps = int(past_steps)
-    #         if self.pretrain_dataloader is not None:
-    #             for batch in self.pretrain_dataloader:
-    #                 if past_steps == 0:
-    #                     break
-    #                 past_steps -= 1
-                
     def max_steps(self):
         """Return the maximum number of steps."""
         return self.max_steps
 
     def fit(
         self,
-        critic_model: ray.actor.ActorHandle,
         initial_model: ray.actor.ActorHandle,
         reward_model: List[ray.actor.ActorHandle],
         reward_fn: Callable[[List[torch.Tensor]], torch.Tensor] = None,
         vllm_engines: List[ray.actor.ActorHandle] = None,
-        critic_train_remote: bool = False,
     ):
         """Train actor model with prompt datasets."""
         strategy = self.strategy
         args = self.strategy.args
 
         # configure Trainer
-        trainer = ActorPPOTrainer(
+        trainer = ActorReinforceTrainer(
             strategy,
             self.actor,
-            critic_model,
             reward_model,
             initial_model,
             ema_model=self.ema_model,
             actor_optim=None,
-            critic_optim=None,
             actor_scheduler=self.actor_scheduler,
-            critic_scheduler=None,
             reward_fn=reward_fn,
             vllm_engines=vllm_engines,
             max_epochs=args.max_epochs,
             micro_train_batch_size=args.micro_train_batch_size,
             micro_rollout_batch_size=args.micro_rollout_batch_size,
             gradient_checkpointing=args.gradient_checkpointing,
-            critic_train_remote=critic_train_remote,
             tokenizer=self.tokenizer,
             prompt_max_len=args.prompt_max_len,
-            value_clip=args.value_clip,
             eps_clip=args.eps_clip,
             gamma=args.gamma,
             lambd=args.lambd,
             init_kl_coef=args.init_kl_coef,
             kl_target=args.kl_target,
-            ema_beta=args.ema_beta,
+            ema_beta=0.992,
             ptx_coef=args.ptx_coef,
             max_norm=args.max_norm,
             # fro GPT generation

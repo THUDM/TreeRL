@@ -43,7 +43,8 @@ class RemoteExperienceMakerPPO(RemoteExperienceMaker):
             self.kl_ctl.value,
             experiences["action_log_probs"],
             experiences["base_action_log_probs"],
-            action_mask=action_mask
+            action_mask=action_mask,
+            process_reward=self.strategy.args.process_supervision
         )
         advantage, returns = self.get_advantages_and_returns(
             experiences["value"],
@@ -52,10 +53,21 @@ class RemoteExperienceMakerPPO(RemoteExperienceMaker):
             generate_kwargs["gamma"],
             generate_kwargs["lambd"],
         )
+        
+        def reformat_reward_for_info(piece):
+            if len(piece.shape) == 1:
+                return piece
+            elif self.strategy.args.process_supervision:
+                mask = piece != 0
+                piece = masked_mean(piece, mask, dim=-1)
+            elif piece.shape[1] > 1:
+                piece = masked_mean(piece, action_mask, dim=-1)
+            return piece
+        
         info = {
             "kl": masked_mean(kl, action_mask, dim=-1),
-            "reward": experiences["raw_reward"],
-            "reward_normalized": experiences["reward"],
+            "reward": reformat_reward_for_info(experiences["raw_reward"]),
+            "reward_normalized": reformat_reward_for_info(experiences["reward"]),
             "return": (reward * action_mask).sum(dim=-1),
             "advantage": (advantage * action_mask).sum(-1) / action_mask.sum(-1),
             "response_length": action_mask.float().sum(dim=-1),

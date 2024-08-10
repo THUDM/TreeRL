@@ -174,7 +174,10 @@ class DeepspeedStrategy(ABC):
 
     def _ds_init_train_model(self, model, optim, scheduler):
         is_actor = isinstance(model, Actor)
-        ds_config = self.get_ds_train_config(is_actor)
+        ds_config = self.get_ds_train_config(
+            is_actor,
+            param_offload=getattr(self.args, "model_offload", False), 
+            activation_offload=getattr(self.args, "activation_offload", False))
 
         engine, optim, _, scheduler = deepspeed.initialize(
             model=model.model if is_actor else model,
@@ -191,10 +194,10 @@ class DeepspeedStrategy(ABC):
 
         return model, optim, scheduler
 
-    def get_ds_train_config(self, is_actor):
+    def get_ds_train_config(self, is_actor, param_offload=False, activation_offload=False):
         # DS Config
         ds_config = get_train_ds_config(
-            offload=False,
+            offload=param_offload,
             adam_offload=self.adam_offload,
             stage=self.stage,
             bf16=self.bf16,
@@ -202,6 +205,7 @@ class DeepspeedStrategy(ABC):
             zpg=self.zpg,
             grad_accum_dtype=self.grad_accum_dtype,
             disable_trace_cache=self.disable_trace_cache,
+            activation_offload=activation_offload
         )
 
         ds_config["train_micro_batch_size_per_gpu"] = self.micro_train_batch_size

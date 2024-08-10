@@ -35,6 +35,8 @@ class DistributedTorchRayActor:
         # environment variable for each actor, so always set device to 0
         # os.environ["LOCAL_RANK"] = str(self._local_rank)
         os.environ["LOCAL_RANK"] = "0"
+        os.environ["NCCL_SOCKET_IFNAME"] = "bond0"
+        os.environ["LD_LIBRARY_PATH"] = "/common_libs/nccl_2.19.322/build/lib/"
 
     @staticmethod
     def _get_current_node_ip():
@@ -56,13 +58,15 @@ class BasePPORole(DistributedTorchRayActor):
     def _setup_distributed(self, strategy: DeepspeedStrategy):
         # configure strategy
         self.strategy = strategy
+        os.environ["LD_LIBRARY_PATH"] = "/common_libs/nccl_2.19.322/build/lib/"
+        
         strategy.setup_distributed()
 
     def init_model_from_pretrained(self, *args, **kwargs):
         raise NotImplementedError()
 
 
-@ray.remote(num_gpus=1)
+@ray.remote(num_gpus=1, )
 class ReferenceModelRayActor(BasePPORole):
     def init_model_from_pretrained(self, strategy: DeepspeedStrategy, pretrain):
         self._setup_distributed(strategy)
@@ -154,10 +158,10 @@ class RewardModelRayActor(BasePPORole):
         self.model = self.strategy.prepare(model, is_rlhf=True)
         self.model.eval()
 
-    def forward(self, sequences: torch.LongTensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, sequences: torch.LongTensor, attention_mask: Optional[torch.Tensor] = None, process_supervison: bool = False) -> torch.Tensor:
         device = torch.cuda.current_device()
         with torch.no_grad():
-            reward = self.model(sequences.to(device), attention_mask.to(device))
+            reward = self.model(sequences.to(device), attention_mask.to(device), process_supervision=process_supervison)
         return reward.to("cpu")
 
 

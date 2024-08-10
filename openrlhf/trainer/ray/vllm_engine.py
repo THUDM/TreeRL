@@ -47,7 +47,17 @@ class LLMRayActor:
     def generate(self, *args, **kwargs):
         return self.llm.generate(*args, **kwargs)
 
-    def init_process_group(self, master_address, master_port, rank_offset, world_size, group_name):
+    # def init_process_group(self, master_address, master_port, rank_offset, world_size, group_name):
+    #     if self.use_gpu_executor:
+    #         return self.llm.llm_engine.model_executor.driver_worker.init_process_group(
+    #             master_address, master_port, rank_offset, world_size, group_name
+    #         )
+    #     else:
+    #         return self.llm.llm_engine.model_executor._run_workers(
+    #             "init_process_group", master_address, master_port, rank_offset, world_size, group_name
+    #         )
+
+    def init_process_group(self, master_address, master_port, rank_offset, world_size, group_name, backend="nccl"):
         if self.use_gpu_executor:
             return self.llm.llm_engine.model_executor.driver_worker.init_process_group(
                 master_address, master_port, rank_offset, world_size, group_name
@@ -58,13 +68,26 @@ class LLMRayActor:
             )
 
     def update_weight(self, name, dtype, shape, empty_cache=False):
+        # self.stop_remote_worker_execution_loop()
+
         if self.use_gpu_executor:
             return self.llm.llm_engine.model_executor.driver_worker.update_weight(name, dtype, shape, empty_cache)
         else:
             return self.llm.llm_engine.model_executor._run_workers("update_weight", name, dtype, shape, empty_cache)
 
+    def stop_remote_worker_execution_loop(self):
+        # Fix error for using 2 communication group
+        # https://github.com/vllm-project/vllm/commit/eb6d3c264d0cd8e44dec16bca7947fbe96415ce9#diff-e1ad69e38e033accddfa5480ec808c4740eb39244d1ef51cc3407e20dde8cfd4
+        if self.__version__ > "0.4.2":
+            self.llm.llm_engine.model_executor.stop_remote_worker_execution_loop()
 
-def create_vllm_engines(num_engines: int, tensor_parallel_size: int, pretrain: str, seed: int):
+
+def create_vllm_engines(
+    num_engines: int,
+    tensor_parallel_size: int,
+    pretrain: str,
+    seed: int,
+    enable_prefix_caching: bool = False):
     vllm_engines = []
     for _ in range(num_engines):
         # When tensor_parallel_size=1, vLLM init model in LLMEngine directly, assign 1 GPU for it.
@@ -90,8 +113,9 @@ def create_vllm_engines(num_engines: int, tensor_parallel_size: int, pretrain: s
                 trust_remote_code=True,
                 tensor_parallel_size=tensor_parallel_size,
                 dtype="bfloat16",
-                seed=seed,
-                # enforce_eager=True
+                seed=int(seed) + _,
+                # enable_prefix_caching=enable_prefix_caching,
+                enforce_eager=True
             )
         )
 

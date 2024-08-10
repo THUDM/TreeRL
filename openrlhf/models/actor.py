@@ -12,6 +12,7 @@ from transformers.deepspeed import HfDeepSpeedConfig
 from transformers.models.mixtral.modeling_mixtral import MixtralSparseMoeBlock
 
 from .utils import log_probs_from_logits, replace_rope_embedding
+import os
 
 # https://github.com/microsoft/DeepSpeed/issues/4932
 replace_rope_embedding()
@@ -69,6 +70,7 @@ class Actor(nn.Module):
             # else:
             nf4_config = None
 
+            print(f"########## loading actor model from: {pretrain_or_model} ##########")
             self.model = AutoModelForCausalLM.from_pretrained(
                 pretrain_or_model,
                 trust_remote_code=True,

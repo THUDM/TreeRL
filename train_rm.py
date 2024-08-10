@@ -29,7 +29,11 @@ def train(args):
         lora_rank=args.lora_rank,
         lora_alpha=args.lora_alpha,
         target_modules=args.target_modules,
-        ds_config=strategy.get_ds_train_config(is_actor=False),
+        ds_config=strategy.get_ds_train_config(
+            is_actor=False,
+            param_offload=args.model_offload,
+            activation_offload=args.activation_offload,
+        ),
         init_value_head=True,
     )
 
@@ -213,6 +217,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--use_mpi_init", action="store_true", default=False)
     parser.add_argument("--process_supervision", action="store_true", default=False)
+    parser.add_argument("--activation_offload", action="store_true", default=False)
+    parser.add_argument("--model_offload", action="store_true", default=False)
 
     args = parser.parse_args()
     print(args)

@@ -1,5 +1,6 @@
 import math
 from abc import ABC
+import os
 
 # import loralib as lora
 import torch
@@ -144,6 +145,7 @@ class RewardModelTrainer(ABC):
                         chosen_reward, reject_reward, aux_loss = self.concatenated_forward(
                             self.model, chosen_ids, c_mask, reject_ids, r_mask
                         )
+                        torch.cuda.empty_cache()
 
                     # loss function
                         if self.compute_fp32_loss:
@@ -174,7 +176,10 @@ class RewardModelTrainer(ABC):
                         else:
                             preference_loss = self.loss_fn(chosen_reward, reject_reward, margin)
                             acc_mean = acc_mean * 0.9 + 0.1 * (chosen_reward > reject_reward).float().mean().item()
-                                                                
+                        
+                            regularization_loss = chosen_reward.pow_(2).mean() + reject_reward.pow_(2).mean()   
+                            preference_loss = preference_loss + 0.0001 * regularization_loss
+                            
                         # inst_rewards = (inst_rewards * inst_labels) + (inst_labels - 1).abs() / 2
                         # chosen_reward[len(reject_reward):] = inst_reward
                         # inst_rewards_reject = torch.zeros_like(inst_rewards)
@@ -207,6 +212,7 @@ class RewardModelTrainer(ABC):
                 if not self.aux_loss:
                     aux_loss = 0
 
+                torch.cuda.empty_cache()
                 loss = preference_loss + aux_loss * self.args.aux_loss_coef
                 self.strategy.backward(loss, self.model, self.optimizer)
                 self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler)
@@ -251,8 +257,17 @@ class RewardModelTrainer(ABC):
         # save ckpt
         # TODO: save best model on dev, use loss/perplexity on whole dev dataset as metric
         if global_step % args.save_steps == 0:
+            save_dir = args.save_path
+            
             tag = f"global_step{global_step}"
-            self.strategy.save_ckpt(self.model, args.ckpt_path, tag, args.max_ckpt_num, args.max_ckpt_mem)
+            state_dir = os.path.join(save_dir, f"_ckpt_{tag}")
+            os.makedirs(state_dir, exist_ok=True)
+
+            self.strategy.save_ckpt(self.model, state_dir, tag, args.max_ckpt_num, args.max_ckpt_mem)
+            
+            model_path = os.path.join(save_dir, f"model_{tag}")
+            os.makedirs(model_path, exist_ok=True)
+            self.strategy.save_model(self.model, self.tokenizer, model_path)
             print("save ckpt at global step %d" % global_step)
 
         # eval
@@ -358,16 +373,31 @@ class RewardModelTrainer(ABC):
                 self._wandb.log(logs)
         self.model.train()  # reset model state
 
-    def concatenated_forward(self, model, chosen_ids, c_mask, reject_ids, r_mask):
+    def concatenated_forward(self, model, chosen_ids, c_mask, reject_ids, r_mask, concat=True):
         """Run the given model on the given batch of inputs, concatenating the chosen and rejected inputs together.
 
         We do this to avoid doing two forward passes, because it's faster for FSDP.
         """
-        input_ids, att_masks = self.concatenated_inputs(chosen_ids, c_mask, reject_ids, r_mask)
-        all_values, output = model(input_ids, attention_mask=att_masks, return_output=True)
-        chosen_rewards = all_values[: chosen_ids.shape[0]]
-        rejected_rewards = all_values[chosen_ids.shape[0] :]
-        aux_loss = output.aux_loss if "aux_loss" in output else []
+        if concat:
+            input_ids, att_masks = self.concatenated_inputs(chosen_ids, c_mask, reject_ids, r_mask)
+            all_values, output = model(input_ids, attention_mask=att_masks, return_output=True)
+            chosen_rewards = all_values[: chosen_ids.shape[0]]
+            rejected_rewards = all_values[chosen_ids.shape[0] :]
+            aux_loss = output.aux_loss if "aux_loss" in output else []
+        else:
+            input_ids, att_masks = self.concatenated_inputs(chosen_ids, c_mask, reject_ids, r_mask)
+            batch_size = input_ids.shape[0]
+            all_values = []
+            output = []
+            for i in range(batch_size):
+                values, _ = model(input_ids[i:i+1], attention_mask=att_masks[i:i+1], return_output=True)
+                all_values.append(values)
+
+            all_values = torch.cat(all_values, dim=0)
+            chosen_rewards = all_values[: chosen_ids.shape[0]]
+            rejected_rewards = all_values[chosen_ids.shape[0] :]
+            
+            aux_loss = []
         
         return chosen_rewards, rejected_rewards, aux_loss
     

@@ -99,8 +99,9 @@ class ReinforcePolicyLoss(nn.Module):
         surr1 = ratio * rewards
         surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * rewards
         loss = -torch.min(surr1, surr2)
-        if kl_coef > 0 and kl is not None:
-            loss = loss + kl_coef * kl
+
+        # if kl_coef > 0 and kl is not None:
+            # loss = loss + kl_coef * kl
         loss = masked_mean(loss, action_mask, dim=-1).mean()
         return loss
 

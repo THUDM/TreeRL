@@ -11,24 +11,24 @@ from torch.optim import Optimizer
 from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 
-from openrlhf.models import Actor, GPTLMLoss, PolicyLoss, SwitchBalancingLoss, ValueLoss
+from openrlhf.models import Actor, GPTLMLoss, ReinforcePolicyLoss, SwitchBalancingLoss, ValueLoss
 from openrlhf.models.utils import masked_mean
 
-from .ppo_utils import AdaptiveKLController, Experience, FixedKLController, NaiveExperienceMaker, NaiveReplayBuffer
+from .ppo_utils import AdaptiveKLController, FixedKLController, NaiveReplayBuffer
+from .ppo_utils import Experience
+from .ppo_utils.experience_maker import NaiveExperienceMaker
 
 
-class PPOTrainer(ABC):
+class ReinforceTrainer(ABC):
     """
         Trainer for PPO algorithm.
 
     Args:
         strategy (Strategy): the strategy to use for training
         actor (Actor): the actor model in ppo algorithm
-        critic (nn.Module): the critic model in ppo algorithm
         reward_model (nn.Module): the reward model in rlhf algorithm to make reward of sentences
         initial_model (Actor): the initial model in rlhf algorithm to generate reference logits to limit the update of actor
         actor_optim (Optimizer): the optimizer to use for actor model
-        critic_optim (Optimizer): the optimizer to use for critic model
         kl_coef (float, defaults to 0.1): the coefficient of kl divergence loss
         train_batch_size (int, defaults to 8): the batch size to use for training
         buffer_limit (int, defaults to 0): the max_size limitaiton of replay buffer
@@ -48,14 +48,11 @@ class PPOTrainer(ABC):
         self,
         strategy,
         actor: Actor,
-        critic: nn.Module,
         reward_model: nn.Module,
         initial_model: Actor,
         ema_model: Actor,
         actor_optim: Optimizer,
-        critic_optim: Optimizer,
         actor_scheduler,
-        critic_scheduler,
         ema_beta: float = 0.992,
         init_kl_coef: float = 0.001,
         kl_target: float = None,
@@ -65,7 +62,6 @@ class PPOTrainer(ABC):
         buffer_limit: int = 0,
         buffer_cpu_offload: bool = True,
         eps_clip: float = 0.2,
-        value_clip: float = 0.2,
         micro_rollout_batch_size: int = 8,
         gradient_checkpointing: bool = False,
         max_epochs: int = 1,
@@ -100,17 +96,13 @@ class PPOTrainer(ABC):
         self.tokenizer_reward = tokenizer_reward
 
         self.actor = actor
-        self.critic = critic
         self.reward_model = reward_model
         self.initial_model = initial_model
         self.ema_model = ema_model
         self.actor_optim = actor_optim
-        self.critic_optim = critic_optim
         self.actor_scheduler = actor_scheduler
-        self.critic_scheduler = critic_scheduler
 
-        self.actor_loss_fn = PolicyLoss(eps_clip)
-        self.critic_loss_fn = ValueLoss(value_clip)
+        self.actor_loss_fn = ReinforcePolicyLoss(eps_clip)
         self.ptx_loss_fn = GPTLMLoss()
 
         # Mixtral 8x7b
@@ -122,7 +114,7 @@ class PPOTrainer(ABC):
             self.kl_ctl = FixedKLController(init_kl_coef)
 
         self.experience_maker = NaiveExperienceMaker(
-            actor, critic, reward_model, initial_model, tokenizer, prompt_max_len, self.kl_ctl, strategy, reward_fn
+            actor, None, reward_model, initial_model, tokenizer, prompt_max_len, self.kl_ctl, strategy, reward_fn
         )
         self.replay_buffer = NaiveReplayBuffer(micro_train_batch_size, buffer_limit, buffer_cpu_offload)
 
@@ -166,17 +158,11 @@ class PPOTrainer(ABC):
         if args.save_steps == -1:
             args.save_steps = float("inf")  # do not save ckpt
 
-        past_global_steps = self.strategy.args.past_global_steps
-    
-        past_steps = past_global_steps * (self.strategy.args.rollout_batch_size / self.strategy.args.micro_rollout_batch_size / self.strategy.world_size)
-        past_steps = int(past_steps)
-
-        print(f"************* past_steps: {past_steps} *************")
-
+        # self.strategy.copy_model_weight(self.initial_model, self.actor)
+        
         for episode in range(args.num_episodes):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
                 self.prompts_dataloader.sampler.set_epoch(episode)
-
             pbar = tqdm(
                 range(self.prompts_dataloader.__len__()),
                 desc=f"Episode [{episode + 1}/{args.num_episodes}]",
@@ -184,21 +170,12 @@ class PPOTrainer(ABC):
             )
 
             for rand_prompts in self.prompts_dataloader:
-                if past_steps > 0:
-                    past_steps -= 1
-                    global_step += 1
-                    pbar.update()
-                    continue
-
                 experience = self.experience_maker.make_experience(rand_prompts, **self.generate_kwargs)
                 # print prompt/answer in each update step
-                # try:
-                #     output = self.tokenizer.batch_decode(experience.sequences, skip_special_tokens=False)
-                #     self.strategy.print(output[0].replace("<|endoftext|>", ""))
-                # except Exception as e:
-                #     self.strategy.print(str("Error in decoding prompt/answer: ") + str (e))
+                # if global_step % update_timesteps == 0:
 
                 try:
+                    
                     sequences = experience.sequences.clone().detach()
                     if torch.is_tensor(sequences):
                         sequences = sequences.cpu().tolist()
@@ -216,6 +193,7 @@ class PPOTrainer(ABC):
                         # self.strategy.print(output[0].replace("<|endoftext|>", ""))
                         if i > 3:
                             break
+
                 except Exception as e:
                     self.strategy.print(str("Error in decoding prompt/answer: ") + str (e))
                         
@@ -225,7 +203,7 @@ class PPOTrainer(ABC):
                     torch.cuda.empty_cache()
                     if self.strategy.args.normalize_advantage:
                         self.replay_buffer.normalize("advantages", self.strategy)
-                    status = self.ppo_train(global_step)
+                    status = self.reinforce_train(global_step)
                     self.replay_buffer.clear()
                     torch.cuda.empty_cache()
                     self.kl_ctl.update(status["kl"], args.rollout_batch_size)
@@ -235,7 +213,7 @@ class PPOTrainer(ABC):
                 pbar.update()
                 global_step = global_step + 1
 
-    def ppo_train(self, global_step):
+    def reinforce_train(self, global_step):
         # replay buffer may be empty at first, we should rebuild at each training
         dataloader = DataLoader(
             self.replay_buffer,
@@ -248,7 +226,7 @@ class PPOTrainer(ABC):
         )
         device = torch.cuda.current_device()
         micro_steps = len(dataloader)
-
+        
         status_list = []
         status_mean = {}
         for epoch in range(self.max_epochs):
@@ -258,10 +236,8 @@ class PPOTrainer(ABC):
                 disable=not self.strategy.is_rank_0(),
             )
             for i, experience in enumerate(pbar):
-                curr_micro_step = int(global_step * micro_steps + i)
-
                 experience.to_device(device)
-                status = self.training_step(experience, frozen_step=(curr_micro_step < self.strategy.args.actor_freeze_steps))
+                status = self.training_step(experience)
 
                 # for DP
                 # weighted mean for kl
@@ -275,14 +251,11 @@ class PPOTrainer(ABC):
                 short_status = {
                     "pg": status["policy_loss"],
                     "rm": status["reward"],
-                    "ret": status["return"],
+                    # "ret": status["return"],
                     "glen": status["response_length"],
                     "tlen": status["total_length"],
                     "kl": status["kl"],
                 }
-                if "critic_loss" in status:
-                    short_status["cri"] = status["critic_loss"]
-                    short_status["vals"] = status["values"]
 
                 if "ptx_loss" in status:
                     short_status["ptx"] = status["ptx_loss"]
@@ -292,33 +265,16 @@ class PPOTrainer(ABC):
             status_mean = status_list[0]
             for m in status_list[1:]:
                 for k, v in m.items():
-                    if k in status_mean:
-                        status_mean[k] += v
-                    else:
-                        status_mean[k] = v
+                    status_mean[k] += v
             for k in status_mean.keys():
                 status_mean[k] /= len(status_list)
         return status_mean
 
-    def training_step(self, experience: Experience, frozen_step=False) -> Dict[str, float]:
-        status = self.training_step_actor(experience, frozen_step=frozen_step)
-        status.update(self.training_step_critic(experience))
+    def training_step(self, experience: Experience) -> Dict[str, float]:
+        status = self.training_step_actor(experience)
         return status
 
-    def training_step_actor(self, experience: Experience, frozen_step=False) -> Dict[str, float]:
-        if frozen_step:
-            status = {"policy_loss": 0}
-            for k, v in experience.info.items():
-                if k == "kl":
-                    status[k] = (
-                        (v * experience.info["response_length"]).sum() / experience.info["response_length"].sum()
-                    ).item()
-                elif k == "reward" and self.strategy.args.process_supervision:
-                    status[k] = (v.sum() / (v != 0).sum()).item()
-                else:
-                    status[k] = v.mean().item()
-            return status
-                
+    def training_step_actor(self, experience: Experience) -> Dict[str, float]:
         self.actor.train()
 
         num_actions = experience.action_mask.size(1)
@@ -327,13 +283,17 @@ class PPOTrainer(ABC):
             experience.sequences, num_actions, attention_mask=experience.attention_mask, return_output=True
         )
 
+        # !!! potential BUG
         # loss function
         actor_loss = self.actor_loss_fn(
             action_log_probs,
             experience.action_log_probs,
             experience.advantages,
             action_mask=experience.action_mask,
+            kl=experience.kl,
+            kl_coef=self.strategy.args.init_kl_coef,
         )
+
         # mixtral
         if self.aux_loss:
             aux_loss = output.aux_loss
@@ -347,12 +307,8 @@ class PPOTrainer(ABC):
             data = next(self.pretrain_dataloader)
             inputs = data[1].squeeze(1).to(torch.cuda.current_device())
             attention_mask = data[2].squeeze(1).to(torch.cuda.current_device())
-            if "action_mask" in data[3]:
-                action_mask = data[3]["action_mask"].squeeze(1).to(torch.cuda.current_device())
-            else:
-                action_mask = attention_mask
             label = torch.where(
-                action_mask.bool(),
+                attention_mask.bool(),
                 inputs,
                 self.ptx_loss_fn.IGNORE_INDEX,
             )
@@ -371,10 +327,8 @@ class PPOTrainer(ABC):
             self.strategy.backward(self.ptx_coef * loss, self.actor, self.actor_optim)
 
         self.strategy.optimizer_step(self.actor_optim, self.actor, self.actor_scheduler, name="actor")
-
         if self.ema_model:
-            # self.strategy.moving_average(self.actor, self.ema_model, self.ema_beta, "cpu")
-            self.strategy.moving_average(self.actor.model, self.ema_model.model, self.ema_beta, "cpu")
+            self.strategy.moving_average(self.actor, self.ema_model, self.ema_beta, "cpu")
 
         # status
         status = {
@@ -382,7 +336,6 @@ class PPOTrainer(ABC):
         }
         if self.pretrain_dataloader is not None:
             status["ptx_loss"] = ptx_loss.item()
-
         for k, v in experience.info.items():
             if k == "kl":
                 status[k] = (
@@ -392,40 +345,6 @@ class PPOTrainer(ABC):
                 status[k] = (v.sum() / (v != 0).sum()).item()
             else:
                 status[k] = v.mean().item()
-        return status
-
-    def training_step_critic(self, experience: Experience) -> Dict[str, float]:
-        self.critic.train()
-
-        # critic loss
-        values, output = self.critic(
-            experience.sequences,
-            action_mask=experience.action_mask,
-            attention_mask=experience.attention_mask,
-            return_output=True,
-        )
-        # loss function
-        critic_loss = self.critic_loss_fn(
-            values,
-            experience.values,
-            experience.returns,
-            action_mask=experience.action_mask,
-        )
-        # mixtral
-        if self.aux_loss:
-            aux_loss = output.aux_loss
-        else:
-            aux_loss = 0
-
-        loss = critic_loss + aux_loss * self.args.aux_loss_coef
-        self.strategy.backward(loss, self.critic, self.critic_optim)
-        self.strategy.optimizer_step(self.critic_optim, self.critic, self.critic_scheduler, name="critic")
-
-        # status
-        status = {
-            "critic_loss": critic_loss.item(),
-            "values": masked_mean(values, experience.action_mask).item(),
-        }
         return status
 
     def save_logs_only(self, logs_dict, step):
@@ -442,7 +361,7 @@ class PPOTrainer(ABC):
                 }.items()
             }
             self._wandb.log(logs)
-
+                
     def save_logs_and_checkpoints(self, args, global_step, step_bar, logs_dict={}):
         if global_step % args.logging_steps == 0:
             # step bar
@@ -464,47 +383,11 @@ class PPOTrainer(ABC):
             pass
         # save ckpt
         # TODO: save best model on dev, use loss/perplexity/others on whole dev dataset as metric
-
         if global_step % args.save_steps == 0:
             tag = f"global_step{global_step}"
-            os.makedirs(os.path.join(args.ckpt_path, f"_actor_{tag}"), exist_ok=True)
-            
+            # self.strategy.save_ckpt(
+            #     self.actor.model, os.path.join(args.ckpt_path, "_actor"), tag, args.max_ckpt_num, args.max_ckpt_mem
+            # )
             self.strategy.save_model(
                 self.actor.model, self.tokenizer, os.path.join(args.ckpt_path, f"_actor_{tag}")
             )
-            
-            if self.strategy.args.enable_ema:
-                os.makedirs(os.path.join(args.ckpt_path, f"_actor_ema_{tag}"), exist_ok=True)
-
-                self.strategy.save_model(
-                    self.ema_model.model, self.tokenizer, os.path.join(args.ckpt_path, f"_actor_ema_{tag}")
-                )
-            
-            if self.strategy.args.save_ckpt:
-                os.makedirs(os.path.join(args.ckpt_path, f"_actor_ckpt_{tag}"), exist_ok=True)
-                self.strategy.save_ckpt(
-                    self.actor.model, 
-                    os.path.join(args.ckpt_path, f"_actor_ckpt_{tag}"), 
-                    tag, 
-                    max_num=args.max_ckpt_num, 
-                    max_mem=args.max_ckpt_mem
-                )
-
-            # if isinstance(self.critic, ray.actor.ActorHandle):
-            #     # ray.get(self.critic._save_model.remote(global_step=global_step))
-            #     ray.get(self.critic._save_model.remote(global_step=global_step))
-            # else:
-            #     os.makedirs(os.path.join(args.ckpt_path, f"_critic_{tag}"), exist_ok=True)
-            #     self.strategy.save_model(
-            #         self.critic, self.tokenizer, os.path.join(args.ckpt_path, f"_critic_{tag}")
-            #     )
-
-
-
-
-
-            # self.strategy.save_ckpt(
-            #     self.critic, os.path.join(args.ckpt_path, "_critic"), tag, args.max_ckpt_num, args.max_ckpt_mem
-            # )
-            # self.strategy.save_model(self.actor.model, self.tokenizer, os.path.join(args.ckpt_path, "_actor"))
-            # self.strategy.save_model(self.critic, self.tokenizer, os.path.join(args.ckpt_path, "_critic"))

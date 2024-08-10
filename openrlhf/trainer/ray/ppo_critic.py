@@ -94,7 +94,8 @@ class CriticModelRayActor(BasePPORole):
             lora_rank=strategy.args.lora_rank,
             lora_alpha=strategy.args.lora_alpha,
             target_modules=strategy.args.target_modules,
-            ds_config=strategy.get_ds_train_config(is_actor=False),
+            # ds_config=strategy.get_ds_train_config(is_actor=False),
+            ds_config=strategy.get_ds_train_config(is_actor=False, activation_offload=getattr(strategy.args, "activation_offload", False)),
         )
         strategy.print(critic)
         strategy.print("reward normalization status: {}".format(strategy.args.normalize_reward))
@@ -129,9 +130,11 @@ class CriticModelRayActor(BasePPORole):
         if strategy.args.load_ckpt:
             ckpt_path = strategy.args.ckpt_path
             exist_dirs = os.listdir(ckpt_path)
+            exist_dirs = [d for d in exist_dirs if "_critic_ckpt_" in d]                    
 
             if len(exist_dirs) > 0:
-                exist_dirs = [d for d in exist_dirs if "_critic_ckpt_" in d]
+                # exist_dirs = [d for d in exist_dirs if "_critic_ckpt_" in d]                    
+
                 exist_dirs = sorted(exist_dirs, key=lambda x:int(x[len("_critic_ckpt_global_step"):]),  reverse=True)
 
                 target_dir = os.path.join(ckpt_path, exist_dirs[0]) 

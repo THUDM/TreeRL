@@ -19,21 +19,33 @@ def get_train_ds_config(
     zpg=8,
     grad_accum_dtype=None,
     disable_trace_cache=False,
+    activation_offload=False
 ):
     device = "cpu" if offload else "none"
     zero_opt_dict = {
         "stage": stage,
-        "offload_param": {"device": device},
+        # "offload_param": {"device": device},
         "offload_optimizer": {
             "device": "cpu" if adam_offload else "none",
             "pin_memory": True,
         },
-        "sub_group_size": "auto",
-        "stage3_max_live_parameters": "auto",
-        "stage3_max_reuse_distance": "auto",
-        "stage3_param_persistence_threshold": "auto",
-        "stage3_prefetch_bucket_size": "auto",
-        "reduce_bucket_size": "auto",
+        "offload_param": {
+            "device": device,
+            "pin_memory": True
+        },
+        # "sub_group_size": "auto",
+        # "stage3_max_live_parameters": "auto",
+        # "stage3_max_reuse_distance": "auto",
+        # "stage3_param_persistence_threshold": "auto",
+        # "stage3_prefetch_bucket_size": "auto",
+        # "reduce_bucket_size": "auto",
+
+        "sub_group_size": 1e9,
+        "stage3_max_live_parameters": 1e9,
+        "stage3_max_reuse_distance": 1e9,
+        "stage3_param_persistence_threshold": 1e8,
+        "stage3_prefetch_bucket_size": 1e8,
+        "reduce_bucket_size": 1e8,
         # "stage3_max_live_parameters": 1e8,
         # "stage3_max_reuse_distance": 1e8,
         # "stage3_param_persistence_threshold": 1e8,
@@ -49,7 +61,7 @@ def get_train_ds_config(
         zero_opt_dict["stage3_max_live_parameters"] = 0
         zero_opt_dict["stage3_max_reuse_distance"] = 0
 
-    return {
+    ds_config = {
         "steps_per_print": 100,
         "zero_optimization": zero_opt_dict,
         "bf16": {
@@ -58,8 +70,26 @@ def get_train_ds_config(
         "gradient_clipping": max_norm,
         "prescale_gradients": False,
         "wall_clock_breakdown": False,
-        "data_types": {"grad_accum_dtype": grad_accum_dtype if grad_accum_dtype else "fp32"},
+        "data_types": {
+            "grad_accum_dtype": grad_accum_dtype if grad_accum_dtype else "fp32"
+        },
     }
+    
+    if activation_offload:
+        print("!!!###### ------ Activations offload enabled ------- ########")
+        checkpointint_opt_dict = {
+            "partition_activations": True,
+            # "checkpoint_in_cpu": True,
+            "contiguous_memory_optimization": False,
+            "number_checkpoints": None,
+            "synchronize": False,
+            "profile": False,
+            "cpu_checkpointing": True,
+            "checkpoint_in_cpu": True
+        }
+        ds_config["activation_checkpointing"] = checkpointint_opt_dict
+        
+    return  ds_config
 
 
 def get_eval_ds_config(

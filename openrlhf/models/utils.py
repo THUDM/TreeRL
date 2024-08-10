@@ -44,19 +44,22 @@ def compute_reward_naive(
     log_probs_base: torch.Tensor,
     action_mask: Optional[torch.Tensor] = None,
     clip_reward_range: float = 5,
-    kl_as_reward: bool = True
+    kl_as_reward: bool = True,
+    process_reward: bool = False
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     if kl_coef <= 0.0:
         kl_coef = 0.0
+        
+    clip_reward_range = 1.0
 
-    # kl = compute_approx_kl(log_probs, log_probs_base, action_mask=action_mask)
-    kl = compute_kl(log_probs, log_probs_base, action_mask=action_mask)
+    kl = compute_approx_kl(log_probs, log_probs_base, action_mask=action_mask)
+    # kl = compute_kl(log_probs, log_probs_base, action_mask=action_mask)
 
     # kl_reward = kl_reward.clamp(min=-5, max=5)
     # kl_reward = -kl_coef * kl.abs().clamp(min=-5, max=5)
     kl_reward = -kl_coef * kl
 
-    r = r.clamp(min=-clip_reward_range, max=clip_reward_range)
+    r = r.clamp(min=-0.6 * clip_reward_range, max=clip_reward_range)
 
     # The following code is equivalent to:
     #
@@ -70,9 +73,14 @@ def compute_reward_naive(
     # eos_indices = action_mask.size(1) - 1 - action_mask.long().fliplr().argmax(dim=1, keepdim=True)
 
     # last_reward = torch.zeros_like(kl).scatter_(dim=1, index=eos_indices, src=r.unsqueeze(1).to(kl.dtype))
-    reward = r.view(-1, 1)
+    if process_reward:
+        reward = r
+    else:
+        reward = r.view(-1, 1)
     if kl_as_reward:
         reward = reward + kl_reward
+
+    reward = (reward * action_mask).float()
         
     return reward, kl
 
@@ -83,7 +91,8 @@ def compute_reward(
     log_probs: torch.Tensor,
     log_probs_base: torch.Tensor,
     action_mask: Optional[torch.Tensor] = None,
-    clip_reward_range: float = 5
+    clip_reward_range: float = 5,
+    process_reward: bool = False
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     if kl_coef <= 0.0:
         kl_coef = 0.0
@@ -104,10 +113,17 @@ def compute_reward(
     #             last_reward[i][t] = r[i]
     #             break
     #
-    eos_indices = action_mask.size(1) - 1 - action_mask.long().fliplr().argmax(dim=1, keepdim=True)
-    last_reward = torch.zeros_like(kl).scatter_(dim=1, index=eos_indices, src=r.unsqueeze(1).to(kl.dtype))
+    
+    if process_reward:
+        # !bug
+        # RuntimeError: The size of tensor a (1709) must match the size of tensor b (1180) at non-singleton dimension 1
+        # print(f"reward: {r.shape}, kl: {kl_reward.shape}, logp: {log_probs.shape}")
+        reward = r + kl_reward
+    else:
+        eos_indices = action_mask.size(1) - 1 - action_mask.long().fliplr().argmax(dim=1, keepdim=True)
+        last_reward = torch.zeros_like(kl).scatter_(dim=1, index=eos_indices, src=r.unsqueeze(1).to(kl.dtype))
 
-    reward = last_reward + kl_reward
+        reward = last_reward + kl_reward    
     
     # reward = reward * action_mask.float()
     
