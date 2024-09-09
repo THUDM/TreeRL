@@ -5,7 +5,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 import re
 from .utils import exist_and_not_none, zero_pad_sequences
-
+import pdb
 
 def preprocess_data(data, input_template=None, prompt_key=None, chosen_key=None, rejected_key=None, source_key=None, label_key=None) -> str:
     # custom dataset
@@ -273,9 +273,10 @@ class RewardDataset(Dataset):
         rejects_masks = []
         margins = []
         labels = []
-        pairwise_list = [x for x in item_list if x[-1] == 0]
-        instancewise_list = [x for x in item_list if x[-1] != 0]
-        
+        #pairwise_list = [x for x in item_list if x[-1] == 0]
+        #instancewise_list = [x for x in item_list if x[-1] != 0]
+        pairwise_list = [x for x in item_list if not torch.is_tensor(x)]
+        instancewise_list = [x for x in item_list if torch.is_tensor(x)]
         for chosen_id, chosen_mask, reject_id, rejects_mask, margin, label in pairwise_list:
             chosen_ids.append(chosen_id)
             chosen_masks.append(chosen_mask)

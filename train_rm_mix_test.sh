@@ -4,8 +4,10 @@ read -r -d '' training_commands <<EOF
 /workspace/ddn/openrlhf-glm/train_rm.py \
     --pretrain /workspace/ddn/modelscope/ZhipuAI/glm-4-9b-chat \
     --model_type reward_mix \
-    --dataset /workspace/ddn/data/MATH_train/trainset/MATH_shepherd_LLAMA450k_0818/train_format.jsonl \
+    --dataset /workspace/ddn/data/MATH_train/trainset/MATH_shepherd_LLAMA450k_0818/train_format_v2.jsonl \
     --dataset_probs 1 \
+    --prompt_key prompt \
+    --label_key labels \
     --save_path /workspace/ddn/models/glm_9B_rw_mix_MATH_shepherd_LLAMA450k \
     --logging_steps 1 \
     --max_epochs 1 \
@@ -16,16 +18,15 @@ read -r -d '' training_commands <<EOF
     --zero_stage 2 \
     --learning_rate 1e-6 \
     --dataset_probs 1 \
-    --flash_attn \
     --gradient_checkpointing \
     --use_wandb 92294210a64bba75fe1a28448a625c4410321a0f \
     --mix_supervision
 EOF
 
-if [[ ${1} != "slurm" ]]; then
-    deepspeed $training_commands
-fi
+#if [[ ${1} != "slurm" ]]; then
+#    deepspeed $training_commands
+#fi
 
-# if [[ ${1} != "slurm" ]]; then
-#     deepspeed --include="localhost:1,2" $training_commands
-# fi
+if [[ ${1} != "slurm" ]]; then
+    deepspeed --include="localhost:0,1" $training_commands
+fi
