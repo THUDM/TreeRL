@@ -7,10 +7,21 @@ import re
 from .utils import exist_and_not_none, zero_pad_sequences
 
 
+""" 
+{
+    "prompt": str,
+    "chosen_response": str,
+    "rejected": str,
+    "history": list[Dict] or None,
+    "labels": list[Dict] or None,
+    "type": str
+}
+"""
+
 def preprocess_data(data, input_template=None, prompt_key=None, chosen_key=None, rejected_key=None, source_key=None, label_key=None) -> str:
     # custom dataset
     source_type = data[source_key] if source_key else None
-    if source_type in ['math', 'code']:
+    if source_type in ('math', 'code'):
         prompt = data[prompt_key]
         chosen = data[label_key]
         reject = ""

@@ -48,7 +48,6 @@ class RewardModelTrainer(ABC):
         max_norm=0.5,
         max_epochs: int = 2,
         loss="sigmoid",
-        process_supervision=False
     ) -> None:
         super().__init__()
         self.strategy = strategy
@@ -61,7 +60,7 @@ class RewardModelTrainer(ABC):
         self.optimizer = optim
         self.tokenizer = tokenizer
         self.args = strategy.args
-        self.process_supervision = process_supervision
+        self.process_supervision = self.args.process_supervision or self.args.mix_supervision
 
         if loss == "sigmoid":
             self.loss_fn = PairWiseLoss()
@@ -399,7 +398,7 @@ class RewardModelTrainer(ABC):
         return chosen_rewards, rejected_rewards, aux_loss
     
     def non_concatenated_forward(self, model, input_ids, mask):
-        rewards, output = model(input_ids, attention_mask=mask, return_output=True)
+        rewards, output = model(input_ids, attention_mask=mask, return_output=True, process_supervision=self.process_supervision)
         aux_loss = output.aux_loss if "aux_loss" in output else []
         return rewards, aux_loss
 
@@ -631,7 +630,6 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
             acc_mean = 0
             loss_mean = 0
             
-            VALID_INDEX = 1
             for chosen_ids, c_mask, reject_ids, r_mask, margin, labels in self.train_dataloader:
                 chosen_ids = chosen_ids.squeeze(1).to(torch.cuda.current_device())
                 c_mask = c_mask.squeeze(1).to(torch.cuda.current_device())
@@ -656,10 +654,7 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                         if self.compute_fp32_loss:
                             chosen_reward = chosen_reward.float()
                             reject_reward = reject_reward.float()
-                        
-                        chosen_reward = chosen_reward[..., VALID_INDEX]
-                        reject_reward = reject_reward[..., VALID_INDEX]
-                        
+                                                
                         if chosen_ids.shape[0] > reject_ids.shape[0]:
                             inst_rewards = chosen_reward[len(reject_reward):]
                             _chosen_reward = chosen_reward[: len(reject_reward)]

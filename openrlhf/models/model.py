@@ -246,6 +246,7 @@ def _get_reward_model_mix(base_pretrained_model, base_llm_model):
             if "glm" in self._model_name:
                 last_hidden_states = last_hidden_states.transpose(0, 1)
             values = self.value_head(last_hidden_states).squeeze(-1)
+
             VALID_INDEX = 1
             if not process_supervision:
                 # left padding in training mode
