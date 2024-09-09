@@ -53,8 +53,8 @@ def get_llm_for_sequence_regression(
         nn.Module: pretrained transformer model.
     """
     assert (
-        model_type == "critic" or model_type == "reward"
-    ), f"invalid model_type: {model_type}, should be critic or reward."
+        model_type in ["reward", "reward_mix", "critic"]
+    ), f"invalid model_type: {model_type}, should be critic or reward or reward_mix."
 
     config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True)
     config.normalize_reward = normalize_reward

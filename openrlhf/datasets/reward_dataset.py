@@ -7,9 +7,14 @@ import re
 from .utils import exist_and_not_none, zero_pad_sequences
 
 
-def preprocess_data(data, input_template=None, prompt_key=None, chosen_key=None, rejected_key=None, source_key=None) -> str:
+def preprocess_data(data, input_template=None, prompt_key=None, chosen_key=None, rejected_key=None, source_key=None, label_key=None) -> str:
     # custom dataset
-    if chosen_key and rejected_key:
+    source_type = data[source_key] if source_key else None
+    if source_type in ['math', 'code']:
+        prompt = data[prompt_key]
+        chosen = data[label_key]
+        reject = ""
+    elif chosen_key and rejected_key:
         if prompt_key:
             prompt = data[prompt_key]
         else:
@@ -17,7 +22,6 @@ def preprocess_data(data, input_template=None, prompt_key=None, chosen_key=None,
             input_template = None  # do not modified with input template again
         chosen = data[chosen_key]
         reject = data[rejected_key]
-        source_type = data[source_key] if source_key else None
     else:
         # Anthropic/hh-rlhf
         # tasksource/oasst1_pairwise_rlhf_reward
@@ -117,12 +121,13 @@ class RewardDataset(Dataset):
         chosen_key = getattr(self.strategy.args, "chosen_key", None)
         rejected_key = getattr(self.strategy.args, "rejected_key", None)
         source_key = getattr(self.strategy.args, "source_key", "type")
+        label_key = getattr(self.strategy.args, "label_key", "labels")
         self.chosen_eos = []
         self.rejected_eos = []
 
         for data in tqdm(dataset, disable=not self.strategy.is_rank_0()):
             prompt, chosen, reject, history, margin, source_type = preprocess_data(
-                data, input_template, prompt_key, chosen_key, rejected_key, source_key
+                data, input_template, prompt_key, chosen_key, rejected_key, source_key, label_key
             )
             if source_type is None:
                 source_type = "unknown"

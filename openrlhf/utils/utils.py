@@ -71,7 +71,8 @@ def blending_datasets(
     data_cache_dir=None
 ):
     if probabilities is not None:
-        datasets = datasets.split(",")
+        if type(datasets) != list:
+            datasets = datasets.split(",")
         probabilities = list(map(float, probabilities.split(",")))
 
         assert len(probabilities) == len(datasets)

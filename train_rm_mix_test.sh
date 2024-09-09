@@ -3,7 +3,9 @@ set -x
 read -r -d '' training_commands <<EOF
 /workspace/ddn/openrlhf-glm/train_rm.py \
     --pretrain /workspace/ddn/modelscope/ZhipuAI/glm-4-9b-chat \
+    --model_type reward_mix \
     --dataset /workspace/ddn/data/MATH_train/trainset/MATH_shepherd_LLAMA450k_0818/train_format.jsonl \
+    --dataset_probs 1 \
     --save_path /workspace/ddn/models/glm_9B_rw_mix_MATH_shepherd_LLAMA450k \
     --logging_steps 1 \
     --max_epochs 1 \
