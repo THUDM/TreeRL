@@ -13,7 +13,7 @@ from transformers.models.mixtral.modeling_mixtral import MixtralSparseMoeBlock
 from openrlhf.utils.logging import init_logger
 
 from .utils import log_probs_from_logits, replace_rope_embedding
-
+import pdb
 # https://github.com/microsoft/DeepSpeed/issues/4932
 replace_rope_embedding()
 
@@ -246,16 +246,15 @@ def _get_reward_model_mix(base_pretrained_model, base_llm_model):
             if "glm" in self._model_name:
                 last_hidden_states = last_hidden_states.transpose(0, 1)
             values = self.value_head(last_hidden_states).squeeze(-1)
-
             VALID_INDEX = 1
             if not process_supervision:
                 # left padding in training mode
                 if self.training:
                     # reward = values[:, -1]
-                    reward = values[..., VALID_INDEX].squeeze(-1)
+                    reward = values[..., VALID_INDEX]
                     reward = reward[:, -1]
                 else:
-                    values = values[..., VALID_INDEX].squeeze(-1)
+                    values = values[..., VALID_INDEX]
                     eos_indices = attention_mask.size(1) - 1 - attention_mask.long().fliplr().argmax(dim=1, keepdim=True)
                     reward = values.gather(dim=1, index=eos_indices).squeeze(1)
 

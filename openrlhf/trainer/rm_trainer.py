@@ -1,9 +1,10 @@
 import math
 from abc import ABC
 import os
-
+import pdb
 # import loralib as lora
 import torch
+
 from torch import nn
 import torch.nn.functional
 from torch.optim import Optimizer
@@ -692,7 +693,7 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                         overall_rewards = rewards.view(-1)
                         labels = labels[labels_mask]
                         overall_rewards = overall_rewards[labels_mask]
-                        preference_loss = torch.nn.CrossEntropyLoss()(rewards, labels)
+                        preference_loss = torch.nn.CrossEntropyLoss()(overall_rewards, labels)
                         labels[labels == -1] = 0
                         # inst_loss = rewards
                         # rewards_ = (rewards * labels) + (labels - 1).abs() / 2

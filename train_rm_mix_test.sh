@@ -23,10 +23,10 @@ read -r -d '' training_commands <<EOF
     --mix_supervision
 EOF
 
-#if [[ ${1} != "slurm" ]]; then
-#    deepspeed $training_commands
-#fi
-
 if [[ ${1} != "slurm" ]]; then
-    deepspeed --include="localhost:0,1" $training_commands
+    deepspeed $training_commands
 fi
+
+#if [[ ${1} != "slurm" ]]; then
+#    deepspeed --include="localhost:0,1" $training_commands
+#fi
