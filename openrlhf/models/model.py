@@ -65,6 +65,8 @@ def get_llm_for_sequence_regression(
         base_pretrained_class = base_class.__base__
         if model_type == "reward":
             cls_class = _get_reward_model(base_pretrained_class, base_class)
+        elif model_type == "reward_mix":
+            cls_class = _get_reward_model_mix(base_pretrained_class, base_class)
         else:
             cls_class = _get_critic_model(base_pretrained_class, base_class)
         print("Failed to load from AutoModel, construct from modelling file.")

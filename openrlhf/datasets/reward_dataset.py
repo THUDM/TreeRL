@@ -386,7 +386,9 @@ def process_finegrained_data(data, prompt_key, response_key, label_key, tokenize
 
 class RewardMixProcessDataset(RewardDataset):
     def __init__(self, dataset, tokenizer, max_length: int, strategy, input_template="Human: {}\nAssistant: ") -> None:
-        super().__init__(dataset, tokenizer, max_length, strategy, input_template)    
+        super().__init__(dataset, tokenizer, max_length, strategy, input_template)
+        self.judge_tokens = get_process_flag_tokens(self.tokenizer)
+        assert len(self.judge_tokens) == 1
 
     def __len__(self):
         return len(self.prompts)

@@ -22,7 +22,7 @@ def train(args):
     # load huggingface model/config
     model = get_llm_for_sequence_regression(
         args.pretrain,
-        "reward",
+        args.model_type,
         use_flash_attention_2=args.flash_attn,
         bf16=args.bf16,
         load_in_4bit=args.load_in_4bit,
@@ -166,6 +166,7 @@ def train(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--pretrain", type=str, default="bigscience/bloomz-1b7")
+    parser.add_argument("--model_type", type=str, default="reward", help="The type of reward model: [reward, critic, reward_mix]")
     # parser.add_argument('--dataset', type=str, default='Anthropic/hh-rlhf')
     parser.add_argument("--dataset", type=str, default="Dahoas/full-hh-rlhf", nargs="*")
     parser.add_argument("--dataset_probs", type=str, default=None, help="sampling probs for datasets")
