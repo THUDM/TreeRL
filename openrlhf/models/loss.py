@@ -143,6 +143,11 @@ class PointMSELoss(nn.Module):
     def forward(self, reward, label):
         return (reward - label) ** 2
 
+class CrossEntropyLoss(nn.Module):
+    def forward(self, reward, label):
+        label[label == -1] = 0
+        return torch.nn.functional.cross_entropy(reward, label)
+
 
 class DPOLoss(nn.Module):
     """

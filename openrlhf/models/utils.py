@@ -50,7 +50,7 @@ def compute_reward_naive(
     if kl_coef <= 0.0:
         kl_coef = 0.0
         
-    clip_reward_range = 1.0
+    clip_reward_range = 1.2
 
     kl = compute_approx_kl(log_probs, log_probs_base, action_mask=action_mask)
     # kl = compute_kl(log_probs, log_probs_base, action_mask=action_mask)
@@ -59,7 +59,9 @@ def compute_reward_naive(
     # kl_reward = -kl_coef * kl.abs().clamp(min=-5, max=5)
     kl_reward = -kl_coef * kl
 
-    r = r.clamp(min=-0.6 * clip_reward_range, max=clip_reward_range)
+    # r = r.clamp(min=-0.6 * clip_reward_range, max=clip_reward_range)
+    r = r.clamp(min=-0.75 * clip_reward_range, max=clip_reward_range)
+
 
     # The following code is equivalent to:
     #
@@ -138,7 +140,7 @@ def log_probs_from_logits(logits: torch.Tensor, labels: torch.Tensor) -> torch.T
 
 def masked_mean(tensor: torch.Tensor, mask: torch.Tensor, dim: int = None) -> torch.Tensor:
     if dim is not None:
-        return (tensor * mask).sum(axis=dim) / mask.sum(axis=dim)
+        return (tensor * mask).sum(axis=dim) / (mask.sum(axis=dim) + 1e-7)
     else:
         return (tensor * mask).sum() / mask.sum()
 

@@ -11,6 +11,7 @@ from .loss import (
     ValueLoss,
     VanillaKTOLoss,
     PointMSELoss,
-    PointSigmoidLoss
+    PointSigmoidLoss,
+    CrossEntropyLoss
 )
 from .model import get_llm_for_sequence_regression

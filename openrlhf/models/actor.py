@@ -42,7 +42,7 @@ class Actor(nn.Module):
         super().__init__()
 
         if isinstance(pretrain_or_model, str):
-            assert not use_flash_attention_2
+            # assert not use_flash_attention_2
             attn_implementation = "flash_attention_2" if use_flash_attention_2 else "eager"
 
             # Patch for https://github.com/huggingface/transformers/issues/28052
@@ -71,14 +71,22 @@ class Actor(nn.Module):
             nf4_config = None
 
             print(f"########## loading actor model from: {pretrain_or_model} ##########")
-            self.model = AutoModelForCausalLM.from_pretrained(
-                pretrain_or_model,
-                trust_remote_code=True,
-                attn_implementation=attn_implementation,
-                quantization_config=nf4_config,
-                torch_dtype="auto",
-                empty_init=False,
-            )
+            if "qwen" in pretrain_or_model:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    pretrain_or_model,
+                    attn_implementation=attn_implementation,
+                    quantization_config=nf4_config,
+                    torch_dtype="auto",
+                )
+            else:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    pretrain_or_model,
+                    trust_remote_code=True,
+                    attn_implementation=attn_implementation,
+                    quantization_config=nf4_config,
+                    torch_dtype="auto",
+                    empty_init=False,
+                )
 
             # LoRA
             # if lora_rank > 0:

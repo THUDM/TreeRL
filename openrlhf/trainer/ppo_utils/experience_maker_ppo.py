@@ -54,6 +54,12 @@ class RemoteExperienceMakerPPO(RemoteExperienceMaker):
             generate_kwargs["lambd"],
         )
         
+        # action_mask = action_mask.float()
+        # mask loss for eos_token
+        # eos_indices = action_mask.float().shape[1] - 1 - action_mask.float().fliplr().argmax(dim=1)
+        # mask = torch.arange(action_mask.size(1), device=action_mask.device).unsqueeze(0) == eos_indices.unsqueeze(1)
+        # advantage = torch.where((advantage < 0) * mask, torch.zeros_like(advantage), advantage)
+        
         def reformat_reward_for_info(piece):
             if len(piece.shape) == 1:
                 return piece

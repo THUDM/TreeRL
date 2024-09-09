@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import random
 
 from datasets import Dataset, interleave_datasets, load_dataset
 from transformers import AutoTokenizer
@@ -140,6 +141,10 @@ def blending_datasets(
         if "train" in data:
             train_data_list.append(data["train"].select(range(min(max_count, len(data["train"])))))
         else:
+            # if isinstance(data, list):
+            #     random.shuffle(data)
+            #     data = data[:min(max_count, len(data))]
+            # else:
             train_data_list.append(data.select(range(min(max_count, len(data)))))  # train will contains eval? TODO
 
         if return_eval:

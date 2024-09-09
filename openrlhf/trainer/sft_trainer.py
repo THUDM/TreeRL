@@ -1,5 +1,6 @@
 import math
 from abc import ABC
+import os
 
 import torch
 from torch import nn
@@ -171,7 +172,10 @@ class SFTTrainer(ABC):
         # TODO: save best model on dev, use loss/perplexity on whole dev dataset as metric
         if global_step % args.save_steps == 0:
             tag = f"global_step{global_step}"
-            self.strategy.save_ckpt(self.model.model, args.ckpt_path, tag, args.max_ckpt_num, args.max_ckpt_mem)
+            # self.strategy.save_ckpt(self.model.model, args.ckpt_path, tag, args.max_ckpt_num, args.max_ckpt_mem)
+            save_dir = os.path.join(self.strategy.args.save_path, tag)
+            os.makedirs(save_dir, exist_ok=True)
+            self.strategy.save_model(self.model, self.tokenizer, save_dir)
 
     def evaluate(self, eval_dataloader, steps=0):
         times = 0

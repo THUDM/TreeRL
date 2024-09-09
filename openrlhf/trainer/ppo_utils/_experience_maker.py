@@ -715,7 +715,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         forward_batch_size = getattr(self.strategy.args, "inference_batch_size", 4)
         
         start_overall = time.time()
-        
+        batch_first = True
+
         if isinstance(prompts, list) and len(prompts) == 2:
             # prompts = [prompts[0] * num_trace_per_sample, prompts[1] * num_trace_per_sample]
             prompts = [
@@ -831,15 +832,10 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         
                 # rewards
                 r_refs = []
-                for rm in self.reward_model:
-                    # if self.critic and self.strategy.args.critic_pretrain and (self.strategy.args.reward_pretrain != self.strategy.args.critic_pretrain):
-                        # micro_sequences_for_rm_cpu, micro_attention_mask_cpu_rm = self.retokenize(micro_sequences_for_rm_cpu, self.tokenizer, self.tokenizer_reward)
-                    # else:
-                    # micro_sequences_cpu_rm, micro_attention_mask_cpu_rm = micro_sequences_cpu, micro_attention_mask_cpu
-                    
+                for rm in self.reward_model:                    
                     micro_sequences_for_rm_cpu, micro_attention_mask_cpu_rm = micro_sequences_for_rm_cpu, micro_attention_mask_for_rm_cpu
 
-                    r_refs.append(rm.forward.remote(micro_sequences_for_rm_cpu, micro_attention_mask_cpu_rm, True))
+                    r_refs.append(rm.forward.remote(micro_sequences_for_rm_cpu, micro_attention_mask_cpu_rm, False))
 
                 # log probs
                 start = time.time()
@@ -861,14 +857,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     
                 wait_time = time.time() - start
 
-                # assert num_actions == micro_action_mask.size(1), f"num_actions: {num_actions}, micro_action_mask.size(1): {micro_action_mask.size(1)}"
-
                 rewards = [r.to(device) for r in rewards]
                 r = self.reward_fn(rewards) if len(rewards) > 0 else rewards[0]
-                r = r[:, -num_rm_actions:]
-
-                # if self.strategy.get_rank() == 0:
-                # print(f"### decoded actions:", self.tokenizer.decode(micro_sequences_for_rm[0][-num_rm_actions:].tolist(), skip_special_tokens=True))
                 
                 _base_action_log_probs.append(base_action_log_probs)
 
@@ -876,120 +866,51 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 _action_mask.append(micro_action_mask)
                 _value.append(value)
                 _sequences.append(micro_sequences)
-                _actions_for_rm.append(micro_sequences_for_rm[:, -num_rm_actions:])
                 _action_log_probs.append(action_log_probs)
-                # _kl.append(kl)
-                _raw_r.append(r)
-                # _process_rewards.append(micro_process_reward)
-                # _reward.append(reward)
                 _actions.append(micro_sequences[:, -num_actions:])
                 _inputs.append(micro_sequences[:, :-num_actions])
                 _attention_masks_actions.append(micro_attention_mask[:, -num_actions:])
                 _attention_masks_inputs.append(micro_attention_mask[:, :-num_actions])
+                # _kl.append(kl)
+                _raw_r.append(r)
+                # _reward.append(reward)
 
                 _wait_time += wait_time
                 _actor_time += actor_time
 
-
-        raw_process_rewards = zero_pad_batch(_raw_r, side="right")
-        actions_for_rm = zero_pad_batch(_actions_for_rm, side="right", pad_token_id=self.tokenizer.pad_token_id)
-        actions = zero_pad_batch(_actions, side="right", pad_token_id=self.tokenizer.pad_token_id)
-        inputs = zero_pad_batch(_inputs, side="left", pad_token_id=self.tokenizer.pad_token_id)
-        attention_mask_action = zero_pad_batch(_attention_masks_actions, side="right")
-        attention_mask_input = zero_pad_batch(_attention_masks_inputs, side="left")
-        sequences = torch.cat([inputs, actions], dim=1)
-        attention_mask = torch.cat([attention_mask_input, attention_mask_action], dim=1)
         action_mask = zero_pad_batch(_action_mask, side="right")
-
-        action_log_probs = zero_pad_batch(_action_log_probs, side="right")
-        base_action_log_probs = zero_pad_batch(_base_action_log_probs, side="right")
-        
-        use_actions_restored = False
-        assert actions.shape[1] == action_mask.shape[1]
-        num_actions = action_mask.shape[1]
-        
-        process_rewards, unormalized_process_reward, actions_restored = self.apply_process_rewards(
-            actions_for_rm, 
-            raw_process_rewards, 
-            batch_size, 
-            is_ppo=True, 
-            normalize_multi_traces=(num_trace_per_sample > 1),
-            original_num_actions=num_actions
-        )
-        # assert ((unormalized_process_reward != 0).sum(1) > 0).all(), f"num={(unormalized_process_reward != 0).sum(1)}, unormalized_process_reward: {unormalized_process_reward.sum(1)}"
-        
-        if not use_actions_restored:
-            # assert micro_process_reward.shape[1] >= num_actions, f"micro_process_reward: {micro_process_reward.shape}, num_actions: {num_actions}"
-
-            if process_rewards.shape[1] > num_actions:
-                print(f"actions_restored: ", actions_restored[:, -1])
-                print(f"action_restored_judge: {(actions_restored[:, -1] != self.tokenizer.pad_token_id).sum()}")
-
-                for i, item in enumerate(actions_restored[:, -1]):
-                    if (actions_restored[i, :num_actions] != actions[i, :num_actions]).any():
-                        # print(f"actions={actions[i]}, actions_restored_ids={actions_restored[i]}")
-                        not_qual_index = actions_restored[i, :num_actions] != actions[i, :num_actions]
-                        action_tokens = actions[i, :num_actions][not_qual_index]
-                        action_tokens_restored = actions_restored[i, :num_actions][not_qual_index]
-                        print(f"actions_texts={self.tokenizer.decode(action_tokens.tolist(), skip_special_tokens=False)}")
-                        print(f"actions_restored_texts={self.tokenizer.decode(action_tokens_restored.tolist(), skip_special_tokens=False)}")
-                        # print(f"actions_ids={action_tokens[:5]}, actions_restored_ids={action_tokens_restored[:5]}")
-                        assert False
-                    else:
-                        print(f"action_test_original: {self.tokenizer.decode(actions_restored[i][num_actions:].tolist(), skip_special_tokens=False)}----, tokens={actions_restored[i][num_actions:]}")
-
-                    # if item != self.tokenizer.pad_token_id:
-                        # print(f"\n--------------- actions_restored_badcase: ", self.tokenizer.decode(actions_restored[i].tolist(), skip_special_tokens=False).replace("<|endoftext|>", ""))
-                        # print(f"\n-------------- actions_badcase: ", self.tokenizer.decode(actions[i].tolist(), skip_special_tokens=False).replace("<|endoftext|>", ""))
-                        # break
-                # print(f"actions_restored_first: ", actions_restored[:, 0])
-                # print(f"actions_restored: ", actions_restored[:, num_actions-1])
-
-            if process_rewards.shape[1] >= num_actions:
-                assert process_rewards.shape[1] <= num_actions, f"process_rewards: {process_rewards.shape}, num_actions: {num_actions}, actions_for_rm: {actions_for_rm.shape}, raw_process_rewards: {raw_process_rewards.shape}, actions_shape={actions_restored.shape}"
-
-                # for item_p, item_u in zip(process_rewards, unormalized_process_reward):
-                #     if (item_u[:num_actions] != 0).sum() == 0:
-                #         nonzero_index = (item_u != 0).nonzero().flatten()
-                #         if len(nonzero_index) > 0:
-                #             nonzero_index = nonzero_index[-1]
-                #             item_u[num_actions-1] = item_u[nonzero_index]
-                #             item_p[num_actions-1] = item_p[nonzero_index]
-                        
-                process_rewards = process_rewards[:, :num_actions]
-                unormalized_process_reward = unormalized_process_reward[:, :num_actions]
-                # for item in micro_process_reward:
-                    # print(f"---------------- micro_process_reward_max_index: {(item != 0).nonzero().flatten()}, num_actions={num_actions}")
-            else:
-                process_rewards = F.pad(process_rewards, (0, num_actions - process_rewards.shape[1]), value=0)
-                unormalized_process_reward = F.pad(unormalized_process_reward, (0, num_actions - unormalized_process_reward.shape[1]), value=0)
-        else:
-            max_length = max([x.nonzero().flatten()[-1] + 1 for x in process_rewards])
-            process_rewards = process_rewards[:, :max_length]
-            actions_restored = actions_restored[:, :max_length]
-                        
-        # assert ((unormalized_process_reward != 0).sum(1) > 0).all(), f"unormalized_process_reward: {unormalized_process_reward.sum(1)}"
-
-        # assert micro_process_reward.shape == micro_action_mask.shape, f"micro_process_reward: {micro_process_reward.shape}, micro_action_mask: {micro_action_mask.shape}"
-        
         # advantage = zero_pad_batch(_advantage, side="right")
         # returns = zero_pad_batch(_returns, side="right")
         # kl = zero_pad_batch(_kl, side="right")
         rollout_time = time.time() - start_overall
+        actions = zero_pad_batch(_actions, side="right", pad_token_id=self.tokenizer.pad_token_id)
+        inputs = zero_pad_batch(_inputs, side="left", pad_token_id=self.tokenizer.pad_token_id)
+        attention_mask_action = zero_pad_batch(_attention_masks_actions, side="right")
+        attention_mask_input = zero_pad_batch(_attention_masks_inputs, side="left")
 
         # attention_mask = zero_pad_batch(_attention_mask, side="right")
         # sequences = zero_pad_batch(_sequences, side="right", pad_token_id=self.tokenizer.pad_token_id)
-        # process_rewards = zero_pad_batch(_process_rewards, side="right")
-        # r = torch.cat(_raw_r, dim=0)
+        sequences = torch.cat([inputs, actions], dim=1)
+        attention_mask = torch.cat([attention_mask_input, attention_mask_action], dim=1)
+
+        action_log_probs = zero_pad_batch(_action_log_probs, side="right")
+        base_action_log_probs = zero_pad_batch(_base_action_log_probs, side="right")
+        r = torch.cat(_raw_r, dim=0)
         
         if self.critic:
             value = zero_pad_batch(_value, side="right")
         else:
             value = None
 
-        _raw_reward = zero_pad_batch(_raw_r, side="right")
-
-        assert ((_raw_reward != 0).sum(1) > 0).all()
+        _raw_reward = r
+        if num_trace_per_sample > 1 and self.strategy.args.normalize_reward_from_multi_traces:
+            r = normalize_reward_from_multi_traces(
+                r, 
+                batch_size, 
+                num_trace_per_sample,
+                min_threshold=getattr(self.strategy.args, "min_reward_gap", 0.0),
+                batch_first=batch_first
+            )
 
         # else:
             # action_mask = actions_restored != self.tokenizer.pad_token_id
@@ -1230,72 +1151,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 min_threshold=getattr(self.strategy.args, "min_reward_gap", 0.0),
                 batch_first=batch_first
             )
-
-        if num_trace_per_sample > 2 and getattr(self.strategy.args, "max_min_reward_samples", False):
-            if num_trace_per_sample == 4:
-                selected_indices = [0, -1]
-            elif num_trace_per_sample >= 6 and num_trace_per_sample <= 8:
-                selected_indices = [0, 1, -2, -1]
-            else:
-                 selected_indices = [0, -1]
-            batch_r = r.view(batch_size, num_trace_per_sample)
-            reward_index = batch_r.argsort(1)
-            
-            m_action_mask, m_attention_mask, m_sequences, m_action_log_probs, m_base_action_log_probs, m_value, m_r = [], [], [], [], [], [], []
-            m_raw_reward = []
-            
-            for i in range(len(batch_r)):
-                # ----------
-                batch_selected_indices = [reward_index[i][item] for item in selected_indices]
-
-                for idx in batch_selected_indices:
-                    midx = idx + i * num_trace_per_sample
-                    m_action_mask.append(action_mask[midx])
-                    m_attention_mask.append(attention_mask[midx])
-                    m_sequences.append(sequences[midx])
-                    m_action_log_probs.append(action_log_probs[midx])
-                    m_base_action_log_probs.append(base_action_log_probs[midx])
-                    m_value.append(value[midx])
-                    m_r.append(r[midx])
-                    m_raw_reward.append(_raw_reward[midx])
-                # -----------    
-                
-                # max_idx, min_idx = reward_index[i][-1], reward_index[i][0]
-                # max_idx = max_idx + i * num_trace_per_sample
-                # min_idx = min_idx + i * num_trace_per_sample
-
-                # m_action_mask.append(action_mask[max_idx])
-                # m_attention_mask.append(attention_mask[max_idx])
-                # m_sequences.append(sequences[max_idx])
-                # m_action_log_probs.append(action_log_probs[max_idx])
-                # m_base_action_log_probs.append(base_action_log_probs[max_idx])
-                # m_value.append(value[max_idx])
-                # m_r.append(r[max_idx])
-                # m_raw_reward.append(_raw_reward[max_idx])
-            
-                # m_action_mask.append(action_mask[min_idx])
-                # m_attention_mask.append(attention_mask[min_idx])
-                # m_sequences.append(sequences[min_idx])
-                # m_action_log_probs.append(action_log_probs[min_idx])
-                # m_base_action_log_probs.append(base_action_log_probs[min_idx])
-                # m_value.append(value[min_idx])
-                # m_r.append(r[min_idx])
-                # m_raw_reward.append(_raw_reward[min_idx])
-            
-            device = sequences.device
-            action_mask = torch.stack(m_action_mask, dim=0).to(device)
-            attention_mask = torch.stack(m_attention_mask, dim=0).to(device)
-            sequences = torch.stack(m_sequences, dim=0).to(device)
-            action_log_probs = torch.stack(m_action_log_probs, dim=0).to(device)
-            base_action_log_probs = torch.stack(m_base_action_log_probs, dim=0).to(device)
-            # r = torch.cat(m_r, dim=0)
-            r = torch.tensor(m_r).to(device)
-            value = torch.stack(m_value, dim=0).to(device)
-            _raw_reward = torch.tensor(m_raw_reward).to(device)
-    
-        # input_len = sequences.shape[1] - action_mask.shape[1]
-        # _raw_reward = _raw_reward[:, input_len:]
-        # r = r.view(-1, 1)
 
         return {
             "action_mask": action_mask,

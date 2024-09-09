@@ -6,9 +6,9 @@ from datetime import datetime
 
 from transformers.trainer import get_scheduler
 
-from openrlhf.datasets import RewardDataset, RewardProcessDataset
+from openrlhf.datasets import RewardDataset, RewardProcessDataset, RewardMixProcessDataset
 from openrlhf.models import get_llm_for_sequence_regression
-from openrlhf.trainer import RewardModelTrainer, ProcessRewardModelTrainer
+from openrlhf.trainer import RewardModelTrainer, ProcessRewardModelTrainer, RewardProcessMixModelTrainer
 from openrlhf.utils import blending_datasets, get_strategy, get_tokenizer
 from openrlhf.trainer.ray.ppo_actor import get_cosine_schedule_with_warmup
 
@@ -58,7 +58,10 @@ def train(args):
     train_data = train_data.select(range(min(args.max_samples, len(train_data))))
     eval_data = eval_data.select(range(min(args.max_samples, len(eval_data))))
     
-    if args.process_supervision:
+    if args.mix_supervision:
+        train_dataset = RewardMixProcessDataset(train_data, tokenizer, args.max_len, strategy, input_template=args.input_template)
+        eval_dataset = RewardMixProcessDataset(eval_data, tokenizer, args.max_len, strategy, input_template=args.input_template)
+    elif args.process_supervision:
         train_dataset = RewardProcessDataset(train_data, tokenizer, args.max_len, strategy, input_template=args.input_template)
         eval_dataset = RewardProcessDataset(eval_data, tokenizer, args.max_len, strategy, input_template=args.input_template)
     else:
@@ -114,7 +117,20 @@ def train(args):
 
     # batch_size here is micro_batch_size * 2
     # we use merged chosen + rejected response forward
-    if args.process_supervision:
+    if args.mix_supervision:
+        trainer = RewardProcessMixModelTrainer(
+            model=model,
+            strategy=strategy,
+            optim=optim,
+            tokenizer=tokenizer,
+            train_dataloader=train_dataloader,
+            eval_dataloader=eval_dataloader,
+            scheduler=scheduler,
+            max_norm=args.max_norm,
+            max_epochs=args.max_epochs,
+            loss=args.loss,
+        )
+    elif args.process_supervision:
         trainer = ProcessRewardModelTrainer(
             model=model,
             strategy=strategy,
@@ -217,6 +233,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--use_mpi_init", action="store_true", default=False)
     parser.add_argument("--process_supervision", action="store_true", default=False)
+    parser.add_argument("--mix_supervision", action="store_true", default=False)
     parser.add_argument("--activation_offload", action="store_true", default=False)
     parser.add_argument("--model_offload", action="store_true", default=False)
 

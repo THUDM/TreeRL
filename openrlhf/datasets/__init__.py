@@ -1,4 +1,4 @@
 from .prompts_dataset import PromptDataset
-from .reward_dataset import RewardDataset, RewardProcessDataset
+from .reward_dataset import RewardDataset, RewardProcessDataset, RewardMixProcessDataset
 from .sft_dataset import SFTDataset
 from .unpaired_preference_dataset import DistributedVanillaKTOSampler, UnpairedPreferenceDataset, UnpairedRewardDataset

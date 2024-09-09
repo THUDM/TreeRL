@@ -124,6 +124,11 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
         if self.strategy.args.perf:
             info = self.log_perf(info, experiences, getattr(self.strategy.args, "num_trace_per_sample", 1))
 
+        # mask loss for eos_token
+        # eos_indices = action_mask.float().shape[1] - 1 - action_mask.float().fliplr().argmax(dim=1)
+        # mask = torch.arange(action_mask.size(1), device=action_mask.device).unsqueeze(0) == eos_indices.unsqueeze(1)
+        # reward = torch.where((reward < 0) * mask, torch.zeros_like(reward), reward)
+
         experience = Experience(
             sequences=experiences["sequences"],
             action_log_probs=experiences["action_log_probs"],

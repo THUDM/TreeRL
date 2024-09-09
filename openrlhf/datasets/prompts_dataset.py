@@ -96,8 +96,7 @@ class PromptDataset(Dataset):
         return length
 
     def __getitem__(self, idx):
-        if "glm" in self.current_model:
+        if "glm" in self.current_model or "llama" in self.current_model or "qwen" in self.current_model:
             return self.prompts[idx], json.dumps(self.history[idx], ensure_ascii=False)
         else:
             return self.prompts[idx]
-    

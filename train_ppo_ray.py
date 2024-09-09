@@ -373,9 +373,9 @@ if __name__ == "__main__":
     print("****** NCCL_SOCKET_IFNAME: ", os.environ["NCCL_SOCKET_IFNAME"])
     # print('***** test var: ', os.environ["TEST_VAR"])
     
-    if os.environ["NCCL_SOCKET_IFNAME"] != "bond0":
-        os.environ["NCCL_SOCKET_IFNAME"] = "bond0"
-    print("****** NCCL_SOCKET_IFNAME after reset: ", os.environ["NCCL_SOCKET_IFNAME"])
+    # if os.environ["NCCL_SOCKET_IFNAME"] != "bond0":
+        # os.environ["NCCL_SOCKET_IFNAME"] = "bond0"
+    # print("****** NCCL_SOCKET_IFNAME after reset: ", os.environ["NCCL_SOCKET_IFNAME"])
 
     args = parser.parse_args()
     print(f"--------- NCCL version: {torch.cuda.nccl.version()}")

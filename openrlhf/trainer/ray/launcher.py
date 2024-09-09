@@ -35,8 +35,9 @@ class DistributedTorchRayActor:
         # environment variable for each actor, so always set device to 0
         # os.environ["LOCAL_RANK"] = str(self._local_rank)
         os.environ["LOCAL_RANK"] = "0"
-        os.environ["NCCL_SOCKET_IFNAME"] = "bond0"
-        os.environ["LD_LIBRARY_PATH"] = "/common_libs/nccl_2.19.322/build/lib/"
+
+        # os.environ["NCCL_SOCKET_IFNAME"] = "bond0"
+        # os.environ["LD_LIBRARY_PATH"] = "/common_libs/nccl_2.19.322/build/lib/"
 
     @staticmethod
     def _get_current_node_ip():
@@ -58,7 +59,7 @@ class BasePPORole(DistributedTorchRayActor):
     def _setup_distributed(self, strategy: DeepspeedStrategy):
         # configure strategy
         self.strategy = strategy
-        os.environ["LD_LIBRARY_PATH"] = "/common_libs/nccl_2.19.322/build/lib/"
+        # os.environ["LD_LIBRARY_PATH"] = "/common_libs/nccl_2.19.322/build/lib/"
         
         strategy.setup_distributed()
 

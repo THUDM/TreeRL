@@ -278,6 +278,8 @@ if __name__ == "__main__":
     parser.add_argument("--generation_batch_size", type=int, default=16)
     parser.add_argument("--inference_batch_size", type=int, default=4)
     parser.add_argument("--enable_prefix_caching", action="store_true", default=False)
+    parser.add_argument("--min_reward_gap", type=float, default=0.0)
+
     
     args = parser.parse_args()
     train(args)

@@ -94,7 +94,7 @@ class SFTDataset(Dataset):
         input_key = getattr(self.strategy.args, "input_key", None)
         output_key = getattr(self.strategy.args, "output_key", None)
 
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower() or "llama" in self.current_model.lower() or "qwen" in self.current_model.lower():
             for data in tqdm(dataset, disable=not self.strategy.is_rank_0()):
                 # self.prompts.append({"input_ids": data["prompt"], "attention_mask": data["prompt_attention_mask"]})
                 # self.targets.append({"input_ids": data["response"], "attention_mask": data["response_attention_mask"]})
@@ -156,7 +156,7 @@ class SFTDataset(Dataset):
         return length
 
     def __getitem__(self, idx):
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower() or "qwen" in self.current_model.lower() or "llama" in self.current_model.lower():
             # prompt_ids_len = self.prompt_ids_lens[idx]
             # input_ids = torch.Tensor(self.prompts[idx]["input_ids"] + self.targets[idx]["input_ids"]).long()
             # attention_mask = torch.ones(input_ids.size(0)).bool()
@@ -164,7 +164,11 @@ class SFTDataset(Dataset):
             response = self.targets[idx]
             history = self.history[idx]
             
-            input_ids, attention_mask, action_mask = self.tokenize_func_chatglm(prompt, response, history)
+            if "glm" in self.current_model.lowewr():
+                input_ids, attention_mask, action_mask = self.tokenize_func_chatglm(prompt, response, history)
+                prompt_ids_len = 1
+            else:
+                input_ids, attention_mask, action_mask, prompt_ids_len = self.tokenize_func_llama(prompt, response, history)
 
             # action_mask = torch.ones(input_ids.size(0))
             # action_mask[:prompt_ids_len] = 0
@@ -173,9 +177,14 @@ class SFTDataset(Dataset):
                 
             data_id = self.prompt_data_indices[idx]
 
-            prompt_ids_len = 1
-            return prompt_ids_len, input_ids, attention_mask, {"input": prompt, "output": response, "action_mask": action_mask, "history": history, "_id": data_id}
-
+            return (
+                prompt_ids_len, 
+                input_ids, 
+                attention_mask, 
+                {"input": prompt, "output": response, "action_mask": action_mask, "history": history, "_id": data_id}
+            )
+        # elif "qwen" or "llama" in self.current_model:
+            
         # others        
         prompt_ids_len = self.prompt_ids_lens[idx]
         prompt = self.prompts[idx]
@@ -193,6 +202,25 @@ class SFTDataset(Dataset):
         input_token["input_ids"][0][-1] = self.tokenizer.eos_token_id
         input_token["attention_mask"][0][-1] = True
         return prompt_ids_len, input_token["input_ids"], input_token["attention_mask"], info
+
+    def tokenize_func_llama(self, prompt, response, history):
+        messages = []
+        if history:
+            for item in history:
+                for item in history:
+                    messages.append({"role": "user", "content": item["prompt"]})
+                    messages.append({"role": "assistant", "content": item["response"]})
+        messages.append({"role": "user", "content": prompt})
+        messages.append({"role": "assistant", "content": response})
+
+        input_ids = self.tokenizer.apply_chat_template(messages)
+        prompt_ids = self.tokenizer.apply_chat_template(messages[:-1], add_generation_prompt=True)
+        prompt_len = len(prompt_ids)
+        input_ids = torch.Tensor(input_ids)
+        attention_masks = torch.ones_like(input_ids)
+        action_masks = torch.ones_like(input_ids)
+        action_masks[:prompt_len] = 0
+        return input_ids, attention_masks, action_masks, prompt_len
 
     def tokenize_func_chatglm(self, prompt, response, history):
         # item["role"], item.get("metadata", ""), content)
@@ -231,6 +259,7 @@ class SFTDataset(Dataset):
         prompt_ids_lens = []
         input_ids = []
         attention_masks = []
+        response_ids_lens = []
         action_masks = []
         infos = {"input": [], "output": [], "history": [], "_id": []}
 
@@ -238,19 +267,22 @@ class SFTDataset(Dataset):
             prompt_ids_lens.append(prompt_ids_len)
             input_ids.append(input_id)
             attention_masks.append(attention_mask)
+            response_ids_lens.append(len(input_ids) - prompt_ids_len)
             # if "action_mask" in info:
-            action_masks.append(info["action_mask"])
+            # action_masks.append(info["action_mask"])
             # else:
                 # action_masks.append(attention_mask)
-            infos["input"].append(info["input"])
-            infos["output"].append(info["output"])
-            infos["history"].append(info["history"])
-            infos["_id"].append(info["_id"])
+            # infos["input"].append(info["input"])
+            # infos["output"].append(info["output"])
+            # infos["history"].append(info["history"])
+            # infos["_id"].append(info["_id"])
 
 
-        input_ids = zero_pad_sequences(input_ids, "right", self.tokenizer.pad_token_id)
-        attention_masks = zero_pad_sequences(attention_masks, "right")
-        action_masks = zero_pad_sequences(action_masks, "right")
-        infos["action_mask"] = action_masks
-        
-        return prompt_ids_lens, input_ids, attention_masks, infos
+        input_ids = zero_pad_sequences(input_ids, "left", self.tokenizer.pad_token_id)
+        attention_masks = zero_pad_sequences(attention_masks, "left", 0)
+        # action_masks = zero_pad_sequences(action_masks, "right")
+        # infos["action_mask"] = action_masks
+        length = input_ids.shape[1]
+        prompt_ids_lens = [length - x for x in response_ids_lens]
+        return prompt_ids_lens, input_ids, attention_masks, "hi"
+        # return prompt_ids_lens, input_ids, attention_masks, infos

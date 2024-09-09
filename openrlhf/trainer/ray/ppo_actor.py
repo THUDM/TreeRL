@@ -132,8 +132,8 @@ class ActorPPOTrainer(PPOTrainer):
         return self.training_step_actor(experience, frozen_step=frozen_step)
 
     def _broadcast_to_vllm(self):
+        # avoid OOM
         torch.cuda.empty_cache()
-        
         model = self.actor.model.module
         count, num_params = 0, len(list(model.named_parameters()))
         for name, param in model.named_parameters():
@@ -142,20 +142,43 @@ class ActorPPOTrainer(PPOTrainer):
             # Fire all vllm engines for broadcast
             if torch.distributed.get_rank() == 0:
                 shape = param.shape if self.strategy.args.zero_stage != 3 else param.ds_shape
-                [
+                refs = [
                     engine.update_weight.remote(name, dtype=param.dtype, shape=shape, empty_cache=count == num_params)
                     for engine in self.vllm_engines
                 ]
 
-            if self.strategy.args.zero_stage != 3:
-                # For ZeRO-1/2, broadcast parameter to all vllm engines by rank 0
+            # For ZeRO-3, allgather sharded parameter and broadcast to all vllm engines by rank 0
+            with deepspeed.zero.GatheredParameters(_z3_params_to_fetch([param]), enabled=self.strategy.args.zero_stage == 3):
                 if torch.distributed.get_rank() == 0:
                     torch.distributed.broadcast(param.data, 0, group=self._model_update_group)
-            else:
-                # For ZeRO-3, allgather sharded parameter and broadcast to all vllm engines by rank 0
-                with deepspeed.zero.GatheredParameters(_z3_params_to_fetch([param]), enabled=True):
-                    if torch.distributed.get_rank() == 0:
-                        torch.distributed.broadcast(param.data, 0, group=self._model_update_group)
+                    ray.get(refs)
+                    
+    # def _broadcast_to_vllm(self):
+    #     torch.cuda.empty_cache()
+        
+    #     model = self.actor.model.module
+    #     count, num_params = 0, len(list(model.named_parameters()))
+    #     for name, param in model.named_parameters():
+    #         count += 1  # empty_cache at last param
+
+    #         # Fire all vllm engines for broadcast
+    #         if torch.distributed.get_rank() == 0:
+    #             shape = param.shape if self.strategy.args.zero_stage != 3 else param.ds_shape
+    #             [
+    #                 engine.update_weight.remote(name, dtype=param.dtype, shape=shape, empty_cache=count == num_params)
+    #                 for engine in self.vllm_engines
+    #             ]
+
+    #         if self.strategy.args.zero_stage != 3:
+    #             # For ZeRO-1/2, broadcast parameter to all vllm engines by rank 0
+    #             if torch.distributed.get_rank() == 0:
+    #                 torch.distributed.broadcast(param.data, 0, group=self._model_update_group)
+    #         else:
+    #             # For ZeRO-3, allgather sharded parameter and broadcast to all vllm engines by rank 0
+    #             with deepspeed.zero.GatheredParameters(_z3_params_to_fetch([param]), enabled=True):
+    #                 if torch.distributed.get_rank() == 0:
+    #                     torch.distributed.broadcast(param.data, 0, group=self._model_update_group)
+    #                     ray.get(refs)
 
 
 def _z3_params_to_fetch(param_list):

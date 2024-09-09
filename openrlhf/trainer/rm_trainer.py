@@ -15,7 +15,8 @@ from openrlhf.models import (
     PairWiseLoss, 
     SwitchBalancingLoss, 
     PointSigmoidLoss, 
-    PointMSELoss
+    PointMSELoss,
+    CrossEntropyLoss
 )
 
 
@@ -71,6 +72,8 @@ class RewardModelTrainer(ABC):
             self.loss_fn = PointSigmoidLoss()
         elif loss == "pointmse":
             self.loss_fn = PointMSELoss()
+        elif loss == "crossentropy":
+            self.loss_fn = CrossEntropyLoss()
         else:
             raise NotImplemented
         
@@ -147,12 +150,11 @@ class RewardModelTrainer(ABC):
                         )
                         torch.cuda.empty_cache()
 
-                    # loss function
+                        # loss function
                         if self.compute_fp32_loss:
                             chosen_reward = chosen_reward.float()
                             reject_reward = reject_reward.float()
                         
-                        # print(f"chosen_reward shape: ", chosen_reward.shape)
                         if chosen_ids.shape[0] > reject_ids.shape[0]:
                             inst_rewards = chosen_reward[len(reject_reward):]
                             _chosen_reward = chosen_reward[: len(reject_reward)]
@@ -177,14 +179,8 @@ class RewardModelTrainer(ABC):
                             preference_loss = self.loss_fn(chosen_reward, reject_reward, margin)
                             acc_mean = acc_mean * 0.9 + 0.1 * (chosen_reward > reject_reward).float().mean().item()
                         
-                            regularization_loss = chosen_reward.pow_(2).mean() + reject_reward.pow_(2).mean()   
-                            preference_loss = preference_loss + 0.0001 * regularization_loss
-                            
-                        # inst_rewards = (inst_rewards * inst_labels) + (inst_labels - 1).abs() / 2
-                        # chosen_reward[len(reject_reward):] = inst_reward
-                        # inst_rewards_reject = torch.zeros_like(inst_rewards)
-                        # _chosen_reward = torch.cat((chosen_reward, inst_rewards))
-                        # _reject_reward = torch.cat((reject_reward, inst_rewards_reject))                    
+                            # regularization_loss = chosen_reward.pow_(2).mean() + reject_reward.pow_(2).mean()
+                            # preference_loss = preference_loss + 0.001 * regularization_loss                
                     else:
                         rewards, aux_loss = self.non_concatenated_forward(self.model, chosen_ids, c_mask)
                         if self.compute_fp32_loss:
@@ -607,3 +603,142 @@ class ProcessRewardModelTrainer(RewardModelTrainer):
                 self._wandb.log(logs)
 
         self.model.train()  # reset model state
+        
+
+class RewardProcessMixModelTrainer(RewardModelTrainer):
+    def fit(self, args):
+        # get eval and save steps
+        if args.eval_steps == -1:
+            args.eval_steps = self.train_dataloader.__len__()  # Evaluate once per epoch
+        if args.save_steps == -1:
+            args.save_steps = float("inf")  # do not save ckpt
+
+        global_step = 1
+        epoch_bar = tqdm(range(self.epochs), desc="Train epoch", disable=not self.strategy.is_rank_0())
+        for epoch in range(self.epochs):
+            #  train
+            step_bar = tqdm(
+                range(self.train_dataloader.__len__()),
+                desc="Train step of epoch %d" % epoch,
+                disable=not self.strategy.is_rank_0(),
+            )
+
+            if isinstance(self.train_dataloader.sampler, DistributedSampler):
+                self.train_dataloader.sampler.set_epoch(epoch)
+
+            self.model.train()
+            acc_mean = 0
+            loss_mean = 0
+            for chosen_ids, c_mask, reject_ids, r_mask, margin, labels in self.train_dataloader:
+                chosen_ids = chosen_ids.squeeze(1).to(torch.cuda.current_device())
+                c_mask = c_mask.squeeze(1).to(torch.cuda.current_device())
+                labels = labels.to(torch.cuda.current_device()).view(-1)
+
+                if self.margin_loss:
+                    margin = torch.tensor(margin).to(torch.cuda.current_device())
+                else:
+                    margin = None
+                        
+                with torch.autograd.set_detect_anomaly(True):
+                    if chosen_ids.numel() > 0 and reject_ids.numel() > 0: # pairwise loss
+                        reject_ids = reject_ids.squeeze(1).to(torch.cuda.current_device())
+                        r_mask = r_mask.squeeze(1).to(torch.cuda.current_device())
+                        
+                        chosen_reward, reject_reward, aux_loss = self.concatenated_forward(
+                            self.model, chosen_ids, c_mask, reject_ids, r_mask
+                        )
+                        torch.cuda.empty_cache()
+
+                        # loss function
+                        if self.compute_fp32_loss:
+                            chosen_reward = chosen_reward.float()
+                            reject_reward = reject_reward.float()
+                        
+                        if chosen_ids.shape[0] > reject_ids.shape[0]:
+                            inst_rewards = chosen_reward[len(reject_reward):]
+                            _chosen_reward = chosen_reward[: len(reject_reward)]
+
+                            inst_labels = labels[len(reject_reward):]
+                            # inst_loss = (inst_rewards * inst_labels) + (inst_labels - 1).abs() / 2 
+                            inst_loss = inst_rewards * inst_labels
+
+                            assert (inst_labels.abs() > 0).all(), inst_labels
+                            inst_predictions = ((inst_rewards.sigmoid() - 0.5) * inst_labels) > 0
+
+                            # inst_labels[inst_labels < 0] = 0
+                            preference_loss = self.loss_fn(_chosen_reward, reject_reward, margin)
+                            # absolute_loss = torch.nn.functional.cross_entropy(inst_rewards, inst_labels)
+                            absolute_loss = - torch.nn.functional.logsigmoid(inst_loss).mean()
+
+                            preference_loss = (preference_loss + absolute_loss) / 2
+                            
+                            _acc_batch = torch.cat([_chosen_reward > reject_reward, inst_predictions])
+                            acc_mean = acc_mean * 0.9 + 0.1 * _acc_batch.float().mean().item()
+                        else:
+                            preference_loss = self.loss_fn(chosen_reward, reject_reward, margin)
+                            acc_mean = acc_mean * 0.9 + 0.1 * (chosen_reward > reject_reward).float().mean().item()
+                        
+                            # regularization_loss = chosen_reward.pow_(2).mean() + reject_reward.pow_(2).mean()
+                            # preference_loss = preference_loss + 0.001 * regularization_loss                
+                    else:
+                        rewards, aux_loss = self.non_concatenated_forward(self.model, chosen_ids, c_mask)
+                        if self.compute_fp32_loss:
+                            rewards = rewards.float()
+                        
+                        # inst_loss = (rewards.sigmoid() * labels) + (labels - 1).abs() / 2
+                        # inst_loss = rewards * labels
+                        # labels = (labels + 1) // 2
+                        labels_mask = labels != 0
+                        overall_rewards = rewards.view(-1)
+                        labels = labels[labels_mask]
+                        overall_rewards = overall_rewards[labels_mask]
+                        preference_loss = torch.nn.CrossEntropyLoss()(rewards, labels)
+                        labels[labels == -1] = 0
+                        # inst_loss = rewards
+                        # rewards_ = (rewards * labels) + (labels - 1).abs() / 2
+
+                        # rejected_reward = torch.zeros_like(rewards)
+                        # assert (labels.abs() > 0).all(), labels
+                        # acc_mean = acc_mean * 0.9 + 0.1 * (((rewards.sigmoid() - 0.5) * labels) > 0).float().mean().item()
+                        acc_mean = acc_mean * 0.9 + 0.1 * (((overall_rewards.sigmoid() - 0.5) * labels) > 0).float().mean().item()
+                
+                        
+                        # labels[labels < 0] = 0                      
+                        # preference_loss = torch.nn.functional.cross_entropy(rewards, labels)
+                        # preference_loss = - torch.nn.functional.logsigmoid(inst_loss)
+                        # preference_loss = - torch.log(inst_loss)
+                        # preference_loss = preference_loss.mean()
+
+                        # chosen_reward = rewards[labels == 1] if (labels == 1).float().sum() > 0 else torch.zeros_like(rewards)
+                        chosen_reward = overall_rewards[labels == 1] if (labels == 1).float().sum() > 0 else torch.zeros_like(overall_rewards)
+                        reject_reward = rewards[labels == -1] if (labels == -1).float().sum() > 0 else torch.zeros_like(rewards)
+                        # reject_reward = rewards[labels == -1] if (labels == -1).float().sum() > 0 else torch.zeros_like(rewards)
+                # mixtral
+                if not self.aux_loss:
+                    aux_loss = 0
+
+                torch.cuda.empty_cache()
+                loss = preference_loss + aux_loss * self.args.aux_loss_coef
+                self.strategy.backward(loss, self.model, self.optimizer)
+                self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler)
+
+                loss_mean = loss_mean * 0.9 + 0.1 * preference_loss.item()
+                # optional rm info
+                logs_dict = {
+                    "preference_loss": preference_loss.item(),
+                    "chosen_reward": chosen_reward.mean().item(),
+                    "reject_reward": reject_reward.mean().item(),
+                    "acc_mean": acc_mean,
+                    "loss_mean": loss_mean,
+                }
+                if self.aux_loss:
+                    logs_dict["aux_loss"] = aux_loss.item()
+                # logs/checkpoints/evaluate
+                self.save_logs_and_checkpoints(args, global_step, step_bar, logs_dict)
+
+                step_bar.update()
+                global_step += 1
+            epoch_bar.update()
+
+        if self._wandb is not None and self.strategy.is_rank_0():
+            self._wandb.finish()
