@@ -52,7 +52,7 @@ def train(args):
         strategy,
         args.seed,
         max_count=5000000,
-        stopping_strategy="all_exhausted",
+        stopping_strategy=args.stopping_strategy,
     )
     print(f"num dataset samples: train-{len(train_data)} eval-{len(eval_data)}")
     train_data = train_data.select(range(min(args.max_samples, len(train_data))))
@@ -170,6 +170,7 @@ if __name__ == "__main__":
     # parser.add_argument('--dataset', type=str, default='Anthropic/hh-rlhf')
     parser.add_argument("--dataset", type=str, default="Dahoas/full-hh-rlhf", nargs="*")
     parser.add_argument("--dataset_probs", type=str, default=None, help="sampling probs for datasets")
+    parser.add_argument("--stopping_strategy", type=str, default="first_exhausted")
     parser.add_argument("--save_path", type=str, default="./ckpt")
     parser.add_argument("--save_steps", type=int, default=-1)
     parser.add_argument("--logging_steps", type=int, default=1)

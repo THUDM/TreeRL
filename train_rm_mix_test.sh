@@ -4,9 +4,11 @@ read -r -d '' training_commands <<EOF
 /workspace/ddn/openrlhf-glm/train_rm.py \
     --pretrain /workspace/ddn/modelscope/ZhipuAI/glm-4-9b-chat \
     --model_type reward_mix \
-    --dataset /workspace/ddn/data/MATH_train/trainset/MATH_shepherd_LLAMA450k_0818/train_format_v2.jsonl \
-    --dataset_probs 1 \
+    --dataset /workspace/ddn/data/MATH_train/trainset/MATH_shepherd_LLAMA450k_0818/train_format_v2.jsonl /workspace/ddn/data/MATH_train/trainset/MATH_shepherd_LLAMA450k_0818/20240821-removerepeat-10k.jsonl \
+    --dataset_probs 0.5,0.5 \
     --prompt_key prompt \
+    --chosen_key response_chosen \
+    --rejected_key response_rejected \
     --label_key labels \
     --save_path /workspace/ddn/models/glm_9B_rw_mix_MATH_shepherd_LLAMA450k \
     --logging_steps 1 \
@@ -17,7 +19,6 @@ read -r -d '' training_commands <<EOF
     --max_len 2048 \
     --zero_stage 2 \
     --learning_rate 1e-6 \
-    --dataset_probs 1 \
     --gradient_checkpointing \
     --use_wandb 92294210a64bba75fe1a28448a625c4410321a0f \
     --mix_supervision

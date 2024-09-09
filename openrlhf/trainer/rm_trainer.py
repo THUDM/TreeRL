@@ -629,7 +629,7 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
             self.model.train()
             acc_mean = 0
             loss_mean = 0
-            
+            VALID_INDEX = 1
             for chosen_ids, c_mask, reject_ids, r_mask, margin, labels in self.train_dataloader:
                 chosen_ids = chosen_ids.squeeze(1).to(torch.cuda.current_device())
                 c_mask = c_mask.squeeze(1).to(torch.cuda.current_device())
@@ -639,7 +639,7 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                     margin = torch.tensor(margin).to(torch.cuda.current_device())
                 else:
                     margin = None
-                        
+                
                 with torch.autograd.set_detect_anomaly(True):
                     if chosen_ids.numel() > 0 and reject_ids.numel() > 0: # pairwise loss
                         reject_ids = reject_ids.squeeze(1).to(torch.cuda.current_device())
@@ -690,19 +690,19 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                         # inst_loss = rewards * labels
                         # labels = (labels + 1) // 2
                         labels_mask = labels != 0
-                        overall_rewards = rewards.view(-1)
+                        overall_rewards = rewards.view(-1, *rewards.shape[2:])
                         labels = labels[labels_mask]
                         overall_rewards = overall_rewards[labels_mask]
                         labels[labels == -1] = 0
-                        
-                        preference_loss = torch.nn.CrossEntropyLoss()(overall_rewards, labels)
+             
+                        preference_loss = torch.nn.CrossEntropyLoss()(overall_rewards, labels.long())
                         # inst_loss = rewards
                         # rewards_ = (rewards * labels) + (labels - 1).abs() / 2
 
                         # rejected_reward = torch.zeros_like(rewards)
                         # assert (labels.abs() > 0).all(), labels
                         # acc_mean = acc_mean * 0.9 + 0.1 * (((rewards.sigmoid() - 0.5) * labels) > 0).float().mean().item()
-                        acc_mean = acc_mean * 0.9 + 0.1 * (((overall_rewards.sigmoid() - 0.5) * labels) > 0).float().mean().item()
+                        acc_mean = acc_mean * 0.9 + 0.1 * (((overall_rewards.sigmoid()[:, VALID_INDEX] - 0.5) * labels) > 0).float().mean().item()
                 
                         
                         # labels[labels < 0] = 0                      
@@ -712,9 +712,10 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                         # preference_loss = preference_loss.mean()
 
                         # chosen_reward = rewards[labels == 1] if (labels == 1).float().sum() > 0 else torch.zeros_like(rewards)
-                        chosen_reward = overall_rewards[labels == 1] if (labels == 1).float().sum() > 0 else torch.zeros_like(overall_rewards)
-                        reject_reward = overall_rewards[labels == -1] if (labels == -1).float().sum() > 0 else torch.zeros_like(overall_rewards)
+                        # chosen_reward = overall_rewards[labels == 1] if (labels == 1).float().sum() > 0 else torch.zeros_like(overall_rewards)
+                        # reject_reward = overall_rewards[labels == -1] if (labels == -1).float().sum() > 0 else torch.zeros_like(overall_rewards)
                         # reject_reward = rewards[labels == -1] if (labels == -1).float().sum() > 0 else torch.zeros_like(rewards)
+                        chosen_reward, reject_reward = torch.tensor([1.]), torch.tensor([1.])
                 # mixtral
                 if not self.aux_loss:
                     aux_loss = 0
