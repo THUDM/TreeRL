@@ -630,6 +630,8 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
             self.model.train()
             acc_mean = 0
             loss_mean = 0
+            
+            VALID_INDEX = 1
             for chosen_ids, c_mask, reject_ids, r_mask, margin, labels in self.train_dataloader:
                 chosen_ids = chosen_ids.squeeze(1).to(torch.cuda.current_device())
                 c_mask = c_mask.squeeze(1).to(torch.cuda.current_device())
@@ -654,6 +656,9 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                         if self.compute_fp32_loss:
                             chosen_reward = chosen_reward.float()
                             reject_reward = reject_reward.float()
+                        
+                        chosen_reward = chosen_reward[..., VALID_INDEX]
+                        reject_reward = reject_reward[..., VALID_INDEX]
                         
                         if chosen_ids.shape[0] > reject_ids.shape[0]:
                             inst_rewards = chosen_reward[len(reject_reward):]
@@ -693,8 +698,9 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                         overall_rewards = rewards.view(-1)
                         labels = labels[labels_mask]
                         overall_rewards = overall_rewards[labels_mask]
-                        preference_loss = torch.nn.CrossEntropyLoss()(overall_rewards, labels)
                         labels[labels == -1] = 0
+                        
+                        preference_loss = torch.nn.CrossEntropyLoss()(overall_rewards, labels)
                         # inst_loss = rewards
                         # rewards_ = (rewards * labels) + (labels - 1).abs() / 2
 
@@ -712,7 +718,7 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
 
                         # chosen_reward = rewards[labels == 1] if (labels == 1).float().sum() > 0 else torch.zeros_like(rewards)
                         chosen_reward = overall_rewards[labels == 1] if (labels == 1).float().sum() > 0 else torch.zeros_like(overall_rewards)
-                        reject_reward = rewards[labels == -1] if (labels == -1).float().sum() > 0 else torch.zeros_like(rewards)
+                        reject_reward = overall_rewards[labels == -1] if (labels == -1).float().sum() > 0 else torch.zeros_like(overall_rewards)
                         # reject_reward = rewards[labels == -1] if (labels == -1).float().sum() > 0 else torch.zeros_like(rewards)
                 # mixtral
                 if not self.aux_loss:
