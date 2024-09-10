@@ -476,6 +476,8 @@ class RewardMixProcessDataset(RewardDataset):
             step_labels = torch.tensor([x["tag"] for x in response]).to(positions.dtype)
             process_labels = process_labels.to(step_labels.dtype)
             scatter_index = torch.where(positions != 0)[0]
+            #TODO How to clip out of max_lenth
+            step_labels = step_labels[:len(scatter_index)]
             assert len(scatter_index) == len(step_labels), f"{len(scatter_index)} != {len(step_labels)}, {scatter_index} != {step_labels}, prompt_len={prompt_len}"
             
             process_labels = process_labels.scatter_(0, scatter_index, step_labels)       

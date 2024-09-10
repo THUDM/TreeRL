@@ -139,6 +139,9 @@ dmypy.json
 
 docs/.build
 
+# wandb
+wandb/
+
 # pytorch checkpoint
 *.pt
 

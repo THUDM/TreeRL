@@ -222,6 +222,7 @@ if __name__ == "__main__":
     parser.add_argument("--rejected_key", type=str, default=None)
     parser.add_argument("--response_key", type=str, default=None)
     parser.add_argument("--label_key", type=str, default=None)
+    parser.add_argument("--source_key", type=str, default=None)
 
     # wandb pamameters
     parser.add_argument("--use_wandb", type=str, default=None)

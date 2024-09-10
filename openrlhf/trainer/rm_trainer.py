@@ -377,8 +377,8 @@ class RewardModelTrainer(ABC):
         if concat:
             input_ids, att_masks = self.concatenated_inputs(chosen_ids, c_mask, reject_ids, r_mask)
             all_values, output = model(input_ids, attention_mask=att_masks, return_output=True)
-            chosen_rewards = all_values[: chosen_ids.shape[0]]
-            rejected_rewards = all_values[chosen_ids.shape[0] :]
+            chosen_rewards = all_values[:chosen_ids.shape[0]]
+            rejected_rewards = all_values[chosen_ids.shape[0]:]
             aux_loss = output.aux_loss if "aux_loss" in output else []
         else:
             input_ids, att_masks = self.concatenated_inputs(chosen_ids, c_mask, reject_ids, r_mask)
@@ -390,8 +390,8 @@ class RewardModelTrainer(ABC):
                 all_values.append(values)
 
             all_values = torch.cat(all_values, dim=0)
-            chosen_rewards = all_values[: chosen_ids.shape[0]]
-            rejected_rewards = all_values[chosen_ids.shape[0] :]
+            chosen_rewards = all_values[:chosen_ids.shape[0]]
+            rejected_rewards = all_values[chosen_ids.shape[0]:]
             
             aux_loss = []
         
@@ -630,6 +630,7 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
             acc_mean = 0
             loss_mean = 0
             VALID_INDEX = 1
+            p_loss, c_loss = None, None
             for chosen_ids, c_mask, reject_ids, r_mask, margin, labels in self.train_dataloader:
                 chosen_ids = chosen_ids.squeeze(1).to(torch.cuda.current_device())
                 c_mask = c_mask.squeeze(1).to(torch.cuda.current_device())
@@ -680,7 +681,8 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                             acc_mean = acc_mean * 0.9 + 0.1 * (chosen_reward > reject_reward).float().mean().item()
                         
                             # regularization_loss = chosen_reward.pow_(2).mean() + reject_reward.pow_(2).mean()
-                            # preference_loss = preference_loss + 0.001 * regularization_loss                
+                            # preference_loss = preference_loss + 0.001 * regularization_loss
+                        c_loss = preference_loss
                     else:
                         rewards, aux_loss = self.non_concatenated_forward(self.model, chosen_ids, c_mask)
                         if self.compute_fp32_loss:
@@ -716,6 +718,7 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                         # reject_reward = overall_rewards[labels == -1] if (labels == -1).float().sum() > 0 else torch.zeros_like(overall_rewards)
                         # reject_reward = rewards[labels == -1] if (labels == -1).float().sum() > 0 else torch.zeros_like(rewards)
                         chosen_reward, reject_reward = torch.tensor([1.]), torch.tensor([1.])
+                        p_loss = preference_loss
                 # mixtral
                 if not self.aux_loss:
                     aux_loss = 0
@@ -728,6 +731,8 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                 loss_mean = loss_mean * 0.9 + 0.1 * preference_loss.item()
                 # optional rm info
                 logs_dict = {
+                    "p_loss": p_loss.item() if p_loss is not None else 1,
+                    "c_loss": c_loss.item() if c_loss is not None else 1,
                     "preference_loss": preference_loss.item(),
                     "chosen_reward": chosen_reward.mean().item(),
                     "reject_reward": reject_reward.mean().item(),
