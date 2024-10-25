@@ -1,17 +1,20 @@
 # bitsandbytes
 datasets
-deepspeed>=0.14.0
+deepspeed
+# deepspeed>=0.14.0
 einops
 isort
 jsonlines
 # loralib
 ray[default]
-# torchmetrics
+torchmetrics
 tqdm
 transformers>=4.37.2
 # transformers_stream_generator
 wandb
-# accelerate
+accelerate
+openai
+wandb
 # transformers==4.38.1
 # mpi4py
 # optimum

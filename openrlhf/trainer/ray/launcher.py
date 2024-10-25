@@ -13,6 +13,7 @@ import deepspeed
 from openrlhf.models import Actor, get_llm_for_sequence_regression
 from openrlhf.utils import DeepspeedStrategy, get_tokenizer
 from openrlhf.utils.deepspeed_utils import _z3_params_to_fetch
+from openrlhf.trainer.ppo_utils.global_envs import RUNTIME_ENV
 
 
 class DistributedTorchRayActor:
@@ -36,9 +37,6 @@ class DistributedTorchRayActor:
         # os.environ["LOCAL_RANK"] = str(self._local_rank)
         os.environ["LOCAL_RANK"] = "0"
 
-        # os.environ["NCCL_SOCKET_IFNAME"] = "bond0"
-        # os.environ["LD_LIBRARY_PATH"] = "/common_libs/nccl_2.19.322/build/lib/"
-
     @staticmethod
     def _get_current_node_ip():
         address = ray._private.services.get_node_ip_address()
@@ -59,7 +57,6 @@ class BasePPORole(DistributedTorchRayActor):
     def _setup_distributed(self, strategy: DeepspeedStrategy):
         # configure strategy
         self.strategy = strategy
-        # os.environ["LD_LIBRARY_PATH"] = "/common_libs/nccl_2.19.322/build/lib/"
         
         strategy.setup_distributed()
 
@@ -67,7 +64,7 @@ class BasePPORole(DistributedTorchRayActor):
         raise NotImplementedError()
 
 
-@ray.remote(num_gpus=1, )
+@ray.remote(num_gpus=1)
 class ReferenceModelRayActor(BasePPORole):
     def init_model_from_pretrained(self, strategy: DeepspeedStrategy, pretrain):
         self._setup_distributed(strategy)
@@ -254,6 +251,7 @@ class PPORayActorGroup:
         critic_model_group: "PPORayActorGroup",
         initial_model_group: "PPORayActorGroup",
         reward_model_groups: List["PPORayActorGroup"],
+        remote_rm_url: List[str] = None,
         reward_fn: Callable[[List[torch.Tensor]], torch.Tensor] = None,
         vllm_engines: List = None,
     ):
@@ -270,6 +268,7 @@ class PPORayActorGroup:
             List: list of remote object refs.
         """
         assert (
+            (remote_rm_url and len(remote_rm_url) > 0) or 
             len(reward_model_groups) == 1 or reward_fn is not None
         ), "reward_fn must be specified if using multiple reward models"
 
@@ -284,15 +283,18 @@ class PPORayActorGroup:
             initial_actor = initial_actors[i % len(initial_actors)]
 
             reward_actors = []
-            for reward_model_group in reward_model_groups:
-                actors = reward_model_group._actor_handlers
-                reward_actors.append(actors[i % len(actors)])
+
+            if not remote_rm_url:
+                for reward_model_group in reward_model_groups:
+                    actors = reward_model_group._actor_handlers
+                    reward_actors.append(actors[i % len(actors)])
 
             refs.append(
                 actor.fit.remote(
                     critic_model=critic_actor,
                     initial_model=initial_actor,
                     reward_model=reward_actors,
+                    remote_rm_url=remote_rm_url,
                     reward_fn=reward_fn,
                     vllm_engines=vllm_engines,
                     # whether this actor should triger corresponding critic model training

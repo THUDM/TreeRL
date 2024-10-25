@@ -50,7 +50,7 @@ def compute_reward_naive(
     if kl_coef <= 0.0:
         kl_coef = 0.0
         
-    clip_reward_range = 1.2
+    clip_reward_range = 1.0
 
     kl = compute_approx_kl(log_probs, log_probs_base, action_mask=action_mask)
     # kl = compute_kl(log_probs, log_probs_base, action_mask=action_mask)
@@ -59,9 +59,8 @@ def compute_reward_naive(
     # kl_reward = -kl_coef * kl.abs().clamp(min=-5, max=5)
     kl_reward = -kl_coef * kl
 
-    # r = r.clamp(min=-0.6 * clip_reward_range, max=clip_reward_range)
-    r = r.clamp(min=-0.75 * clip_reward_range, max=clip_reward_range)
-
+    # TODO: ---- RESTORE THIS LINE ----
+    # r = r.clamp(min=-0.7 * clip_reward_range, max=clip_reward_range)
 
     # The following code is equivalent to:
     #

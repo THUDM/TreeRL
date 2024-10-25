@@ -82,21 +82,62 @@ class PromptDataset(Dataset):
         # self.input_template = input_template
         self.input_template = None
         input_key = getattr(self.strategy.args, "input_key", None)
+        label_key = getattr(self.strategy.args, "label_key", None)
+        source_key = getattr(self.strategy.args, "source_key", None)
+        
         self.current_model = strategy.args.pretrain
+
+        # assert label_key is not None, f"label_key={label_key}"
 
         self.prompts = []
         self.history = []
+        self.labels = []
+        self.sources = []
         for data in tqdm(dataset, disable=not self.strategy.is_rank_0()):
             prompt, history = preprocess_data(data, input_template, input_key)
+            if label_key is not None:
+                label = data[label_key]
+            else:
+                label = None
+                
+            if source_key is not None:
+                source = data[source_key]
+            else:
+                source = None
+                
             self.prompts.append(prompt)
             self.history.append(history)
+            self.labels.append(label)
+            self.sources.append(source)
 
     def __len__(self):
         length = len(self.prompts)
         return length
 
+    # def __getitem__(self, idx):
+    #     if "glm" in self.current_model or "llama" in self.current_model or "qwen" in self.current_model:
+    #         return self.prompts[idx], json.dumps(self.history[idx], ensure_ascii=False)
+    #     else:
+    #         return self.prompts[idx]
+
     def __getitem__(self, idx):
         if "glm" in self.current_model or "llama" in self.current_model or "qwen" in self.current_model:
-            return self.prompts[idx], json.dumps(self.history[idx], ensure_ascii=False)
+            history = self.history[idx]
+            prompt = self.prompts[idx]
+            label = self.labels[idx]
+            source = self.sources[idx]
+            if history is None:
+                history = []
+            
+            if label is not None:
+                output = history + [{"prompt": prompt, self.strategy.args.label_key: label}]
+            else:
+                output = history + [{"prompt": prompt}]
+
+            if source is not None:
+                output[-1][self.strategy.args.source_key] = source
+
+            return json.dumps(output)
+            # return self.prompts[idx], json.dumps(self.history[idx], ensure_ascii=False)
         else:
             return self.prompts[idx]

@@ -117,19 +117,22 @@ def train(args):
         pg = placement_group(bundles, strategy="STRICT_SPREAD")
         ray.get(pg.ready())
 
-    # multiple reward models
-    reward_pretrains = args.reward_pretrain.split(",")
-    reward_models = []
-    for _ in reward_pretrains:
-        reward_models.append(
-            PPORayActorGroup(
-                args.reward_num_nodes,
-                args.reward_num_gpus_per_node,
-                RewardModelRayActor,
-                pg=pg,
-                num_gpus_per_actor=0.25 if pg else 1,
+    if not args.remote_rm_url:
+        # multiple reward models
+        reward_pretrains = args.reward_pretrain.split(",")
+        reward_models = []
+        for _ in reward_pretrains:
+            reward_models.append(
+                PPORayActorGroup(
+                    args.reward_num_nodes,
+                    args.reward_num_gpus_per_node,
+                    RewardModelRayActor,
+                    pg=pg,
+                    num_gpus_per_actor=0.25 if pg else 1,
+                )
             )
-        )
+    else:
+        reward_models = None
 
     # init reference/reward/actor model
     print(f"**** Loading reference model from {args.pretrain} ****")
@@ -143,10 +146,11 @@ def train(args):
     refs.extend(actor_model.async_init_model_from_pretrained(strategy, args.pretrain))
     ref_names.extend(["actor"] * (len(refs) - len(ref_names)))
 
-    print(f"**** Loading reward model from {args.reward_pretrain} ****")
-    for reward_model, reward_pretrain in zip(reward_models, reward_pretrains):
-        refs.extend(reward_model.async_init_model_from_pretrained(strategy, reward_pretrain))
-    ref_names.extend(["reward"] * (len(refs) - len(ref_names)))
+    if not args.remote_rm_url:
+        print(f"**** Loading reward model from {args.reward_pretrain} ****")
+        for reward_model, reward_pretrain in zip(reward_models, reward_pretrains):
+            refs.extend(reward_model.async_init_model_from_pretrained(strategy, reward_pretrain))
+        ref_names.extend(["reward"] * (len(refs) - len(ref_names)))
     
     print(f"**** Loading VLLM models ****")
     # init vLLM engine for text generation
@@ -199,7 +203,11 @@ def train(args):
 
     # train actor and critic mdoel
     refs = actor_model.async_fit_actor_model(
-        critic_model, ref_model, reward_models, reward_fn=reward_fn, vllm_engines=vllm_engines
+        critic_model, 
+        ref_model, 
+        reward_models, 
+        args.remote_rm_url,
+        reward_fn=reward_fn, vllm_engines=vllm_engines
     )
     ray.get(refs)
 
@@ -353,6 +361,7 @@ if __name__ == "__main__":
     # reward normalization
     parser.add_argument("--normalize_reward", action="store_true", default=False)
     parser.add_argument("--normalize_reward_from_multi_traces", action="store_true", default=False)
+    parser.add_argument("--normalize_reward_from_multi_traces_with_rloo", action="store_true", default=False)
     parser.add_argument("--normalize_advantage", action="store_true", default=False)
     parser.add_argument("--actor_freeze_steps", type=int, default=0)
     parser.add_argument("--task_type", type=str, default="130b_ppo")
@@ -365,7 +374,9 @@ if __name__ == "__main__":
     parser.add_argument("--inference_batch_size", type=int, default=4)
     parser.add_argument("--enable_prefix_caching", action="store_true", default=False)
     parser.add_argument("--min_reward_gap", type=float, default=0.0)
-    
+    parser.add_argument("--remote_rm_url", type=str, nargs="+", default=None)
+    parser.add_argument("--label_key", type=str, default=None)
+    parser.add_argument("--normalize_reward_mean_only", action="store_true", default=False)
     # parser.add_argument("--roll_out_batch_size_multiplier", type=int, default=1)
 
     print("*********** LD_LIBRARY:", os.environ["LD_LIBRARY_PATH"])

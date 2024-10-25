@@ -152,6 +152,7 @@ class CriticModelRayActor(BasePPORole):
             actor=None,
             critic=self.critic,
             reward_model=None,
+            remote_rm_url=None,
             initial_model=None,
             ema_model=None,
             actor_optim=None,

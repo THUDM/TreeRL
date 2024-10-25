@@ -132,11 +132,11 @@ class Actor(nn.Module):
             "top_k": kwargs.get("top_k", None),
             "top_p": kwargs.get("top_p", None),
             "do_sample": kwargs.get("do_sample", True),
-            "early_stopping": True,
+            # "early_stopping": True,
             "temperature": kwargs.get("temperature", 1),
             "use_cache": True,
             "num_beams": kwargs.get("num_beams", 1),
-            "attention_mask": kwargs.get("attention_mask"),
+            # "attention_mask": kwargs.get("attention_mask"),
             "eos_token_id": kwargs.get("eos_token_id"),
             "pad_token_id": kwargs.get("pad_token_id"),
             "min_new_tokens": kwargs.get("min_new_tokens ", 1),
@@ -153,6 +153,10 @@ class Actor(nn.Module):
         # Prepare mask tensor
         eos_token_id = generate_args["eos_token_id"]
         pad_token_id = generate_args["pad_token_id"]
+
+        for seq in sequences:
+            if seq[-1].item() != pad_token_id:
+                seq[-1] = eos_token_id
 
         return self.process_sequences(sequences, input_ids.size(1), eos_token_id, pad_token_id)
 

@@ -684,6 +684,8 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                             # preference_loss = preference_loss + 0.001 * regularization_loss
                         c_loss = preference_loss
                     else:
+                        assert chosen_ids.numel() > 0 or reject_ids.numel() > 0, "both chosen and rejected samples are empty"
+                        
                         rewards, aux_loss = self.non_concatenated_forward(self.model, chosen_ids, c_mask)
                         if self.compute_fp32_loss:
                             rewards = rewards.float()
@@ -691,12 +693,14 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                         # inst_loss = (rewards.sigmoid() * labels) + (labels - 1).abs() / 2
                         # inst_loss = rewards * labels
                         # labels = (labels + 1) // 2
+
                         labels_mask = labels != 0
                         overall_rewards = rewards.view(-1, *rewards.shape[2:])
                         labels = labels[labels_mask]
+                        assert labels.shape[0] > 0, f"labels={labels}, labels_mask={labels_mask}"
                         overall_rewards = overall_rewards[labels_mask]
                         labels[labels == -1] = 0
-             
+                                     
                         preference_loss = torch.nn.CrossEntropyLoss()(overall_rewards, labels.long())
                         # inst_loss = rewards
                         # rewards_ = (rewards * labels) + (labels - 1).abs() / 2

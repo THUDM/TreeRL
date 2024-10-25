@@ -17,6 +17,7 @@ from openrlhf.models.utils import masked_mean
 from .ppo_utils import AdaptiveKLController, FixedKLController, NaiveReplayBuffer
 from .ppo_utils import Experience
 from .ppo_utils.experience_maker import NaiveExperienceMaker
+from .ppo_utils.experience_maker_reinforce import NaiveExperienceMakerReinforce
 
 
 class ReinforceTrainer(ABC):
@@ -70,7 +71,9 @@ class ReinforceTrainer(ABC):
         prompt_max_len: int = 128,
         dataloader_pin_memory: bool = True,
         reward_fn: Callable[[List[torch.Tensor]], torch.Tensor] = None,
+        remote_rm_url: List[str] = None,
         tokenizer_reward: Optional[Callable[[Any], dict]] = None,
+        remote_reward_url: Optional[str] = None,
         **generate_kwargs,
     ) -> None:
         assert (
@@ -94,6 +97,7 @@ class ReinforceTrainer(ABC):
         self.gradient_checkpointing = gradient_checkpointing
         self.reward_fn = reward_fn
         self.tokenizer_reward = tokenizer_reward
+        self.remote_rm_url = remote_rm_url
 
         self.actor = actor
         self.reward_model = reward_model
@@ -113,8 +117,11 @@ class ReinforceTrainer(ABC):
         else:
             self.kl_ctl = FixedKLController(init_kl_coef)
 
-        self.experience_maker = NaiveExperienceMaker(
-            actor, None, reward_model, initial_model, tokenizer, prompt_max_len, self.kl_ctl, strategy, reward_fn
+        # self.experience_maker = NaiveExperienceMaker(
+        #     actor, None, reward_model, initial_model, tokenizer, prompt_max_len, self.kl_ctl, strategy, reward_fn
+        # )
+        self.experience_maker = NaiveExperienceMakerReinforce(
+             actor, None, reward_model, remote_reward_url, initial_model, tokenizer, prompt_max_len, self.kl_ctl, strategy, reward_fn
         )
         self.replay_buffer = NaiveReplayBuffer(micro_train_batch_size, buffer_limit, buffer_cpu_offload)
 
@@ -175,7 +182,6 @@ class ReinforceTrainer(ABC):
                 # if global_step % update_timesteps == 0:
 
                 try:
-                    
                     sequences = experience.sequences.clone().detach()
                     if torch.is_tensor(sequences):
                         sequences = sequences.cpu().tolist()
@@ -390,4 +396,14 @@ class ReinforceTrainer(ABC):
             # )
             self.strategy.save_model(
                 self.actor.model, self.tokenizer, os.path.join(args.ckpt_path, f"_actor_{tag}")
+            )
+
+        if self.strategy.args.save_ckpt:
+            os.makedirs(os.path.join(args.ckpt_path, f"_actor_ckpt_{tag}"), exist_ok=True)
+            self.strategy.save_ckpt(
+                self.actor.model, 
+                os.path.join(args.ckpt_path, f"_actor_ckpt_{tag}"), 
+                tag, 
+                max_num=args.max_ckpt_num, 
+                max_mem=args.max_ckpt_mem
             )

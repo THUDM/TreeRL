@@ -97,25 +97,29 @@ def train(args):
     )
 
     # multiple reward models
-    reward_pretrains = args.reward_pretrain.split(",")
-    reward_models = []
-    for _ in reward_pretrains:
-        reward_models.append(
-            ReinforceRayActorGroup(
-                args.reward_num_nodes,
-                args.reward_num_gpus_per_node,
-                RewardModelRayActor,
-                pg=pg,
-                num_gpus_per_actor=1,
+    if not args.remote_rm_url:
+        reward_pretrains = args.reward_pretrain.split(",")
+        reward_models = []
+        for _ in reward_pretrains:
+            reward_models.append(
+                ReinforceRayActorGroup(
+                    args.reward_num_nodes,
+                    args.reward_num_gpus_per_node,
+                    RewardModelRayActor,
+                    pg=pg,
+                    num_gpus_per_actor=1,
+                )
             )
-        )
+    else:
+        reward_models = None
 
     # init reference/reward/actor model
     refs = []
     refs.extend(ref_model.async_init_model_from_pretrained(strategy, args.pretrain))
     refs.extend(actor_model.async_init_model_from_pretrained(strategy, args.pretrain))
-    for reward_model, reward_pretrain in zip(reward_models, reward_pretrains):
-        refs.extend(reward_model.async_init_model_from_pretrained(strategy, reward_pretrain))
+    if not args.remote_rm_url:
+        for reward_model, reward_pretrain in zip(reward_models, reward_pretrains):
+            refs.extend(reward_model.async_init_model_from_pretrained(strategy, reward_pretrain))
 
     # init vLLM engine for text generation
     vllm_engines = None
@@ -131,7 +135,11 @@ def train(args):
 
     # train actor and critic mdoel
     refs = actor_model.async_fit_actor_model(
-        ref_model, reward_models, reward_fn=reward_fn, vllm_engines=vllm_engines
+        ref_model, 
+        reward_models, 
+        args.remote_rm_url,
+        reward_fn=reward_fn, 
+        vllm_engines=vllm_engines
     )
     ray.get(refs)
 
@@ -279,7 +287,13 @@ if __name__ == "__main__":
     parser.add_argument("--inference_batch_size", type=int, default=4)
     parser.add_argument("--enable_prefix_caching", action="store_true", default=False)
     parser.add_argument("--min_reward_gap", type=float, default=0.0)
-
+    parser.add_argument("--remote_rm_url", type=str, nargs="+", default=None)
+    parser.add_argument("--label_key", type=str, default=None)
+    parser.add_argument("--source_key", type=str, default=None)
+    parser.add_argument("--normalize_reward_from_multi_traces_with_rloo", action="store_true", default=False)
+    parser.add_argument("--normalize_reward_mean_only", action="store_true", default=False)
+    parser.add_argument("--mask_repeated_samples", action="store_true", default=False)
+    parser.add_argument("--use_rule_based_reward", action="store_true", default=False)
     
     args = parser.parse_args()
     train(args)

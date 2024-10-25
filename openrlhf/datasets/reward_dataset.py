@@ -23,8 +23,12 @@ def preprocess_data(data, input_template=None, prompt_key=None, chosen_key=None,
     source_type = data[source_key] if source_key else None
     if source_type in ('math', 'code'):
         prompt = data[prompt_key]
-        chosen = data[label_key]
-        reject = ""
+        if label_key is not None and label_key in data:
+            chosen = data[label_key]
+            reject = ""
+        else:
+            chosen = data[chosen_key]
+            reject = data[rejected_key]
     elif chosen_key and rejected_key:
         if prompt_key:
             prompt = data[prompt_key]
@@ -444,12 +448,14 @@ class RewardMixProcessDataset(RewardDataset):
             return sample["input_ids"], sample["attention_mask"]
 
         def random_interleaved_concat(strings):
+            strings = [x.strip() for x in strings]
             result = strings[0]
             # separators = list(SPLIT_MAP.keys())
             text_op, separator = random.choice(list(SPLIT_MAP.items()))
-            for sentence in strings[1:]:
-                # separator = random.choice(separators)
-                result += text_op + separator + sentence
+            if len(strings) > 1:
+                for sentence in strings[1:]:
+                    # separator = random.choice(separators)
+                    result += text_op + separator + sentence
             result += separator
             return result
         
@@ -459,8 +465,13 @@ class RewardMixProcessDataset(RewardDataset):
             
             sample_input_ids = history_input_ids + self.tokenizer.build_single_message("user", "", prompt)
             prompt_len = len(sample_input_ids) + 2
-            sample_input_ids = sample_input_ids + self.tokenizer.build_single_message("assistant", "", formatted_response)
-            sample_input_ids = sample_input_ids[:self.max_length-3] + [self.tokenizer.convert_tokens_to_ids("<|user|>")]
+            # sample_input_ids = sample_input_ids 
+            response_ids = self.tokenizer.build_single_message("assistant", "", formatted_response)
+            prompt_len = min(prompt_len, self.max_length - len(response_ids) - 1)
+            sample_input_ids = sample_input_ids[-prompt_len:] + response_ids
+            sample_input_ids = sample_input_ids + [self.tokenizer.convert_tokens_to_ids("<|user|>")]
+            # sample_input_ids = sample_input_ids[:self.max_length-3] + [self.tokenizer.convert_tokens_to_ids("<|user|>")]
+            # sample_input_ids = sample_input_ids[-(self.max_length-3):] + [self.tokenizer.convert_tokens_to_ids("<|user|>")]
             sample = self.tokenizer.batch_encode_plus([sample_input_ids], return_tensors="pt", is_split_into_words=True)
             
             input_ids = sample["input_ids"].view(-1)
@@ -470,6 +481,7 @@ class RewardMixProcessDataset(RewardDataset):
             positions = torch.zeros_like(input_ids).bool()
             positions = positions | (input_ids == self.judge_tokens[0])
             positions = positions.float()
+            assert (positions.sum(-1) > 0).all(), f"positions={positions}, response={formatted_response}"
             positions[:prompt_len] = 0
             
             # formatted_response = SPLIT_MAP["\n"].join(steps)
@@ -477,9 +489,10 @@ class RewardMixProcessDataset(RewardDataset):
             process_labels = process_labels.to(step_labels.dtype)
             scatter_index = torch.where(positions != 0)[0]
             #TODO How to clip out of max_lenth
-            step_labels = step_labels[:len(scatter_index)]
-            assert len(scatter_index) == len(step_labels), f"{len(scatter_index)} != {len(step_labels)}, {scatter_index} != {step_labels}, prompt_len={prompt_len}"
+            # step_labels = step_labels[:len(scatter_index)]
             
+            assert len(scatter_index) == len(step_labels), f"{formatted_response}, {scatter_index} != {step_labels}, prompt_len={prompt_len}"
+            assert len(step_labels) > 0, step_labels
             process_labels = process_labels.scatter_(0, scatter_index, step_labels)       
             
             input_ids = input_ids.view(1, -1)

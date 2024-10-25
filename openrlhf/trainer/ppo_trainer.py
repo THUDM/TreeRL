@@ -74,6 +74,7 @@ class PPOTrainer(ABC):
         prompt_max_len: int = 128,
         dataloader_pin_memory: bool = True,
         reward_fn: Callable[[List[torch.Tensor]], torch.Tensor] = None,
+        remote_rm_url: List[str] = None,
         tokenizer_reward: Optional[Callable[[Any], dict]] = None,
         **generate_kwargs,
     ) -> None:
@@ -98,6 +99,7 @@ class PPOTrainer(ABC):
         self.gradient_checkpointing = gradient_checkpointing
         self.reward_fn = reward_fn
         self.tokenizer_reward = tokenizer_reward
+        self.remote_rm_url = remote_rm_url
 
         self.actor = actor
         self.critic = critic
@@ -122,7 +124,7 @@ class PPOTrainer(ABC):
             self.kl_ctl = FixedKLController(init_kl_coef)
 
         self.experience_maker = NaiveExperienceMaker(
-            actor, critic, reward_model, initial_model, tokenizer, prompt_max_len, self.kl_ctl, strategy, reward_fn
+            actor, critic, reward_model, remote_rm_url, initial_model, tokenizer, prompt_max_len, self.kl_ctl, strategy, reward_fn
         )
         self.replay_buffer = NaiveReplayBuffer(micro_train_batch_size, buffer_limit, buffer_cpu_offload)
 

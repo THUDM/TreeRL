@@ -46,6 +46,7 @@ class ActorReinforceTrainer(ReinforceTrainer):
             self.actor,
             None,
             self.reward_model,
+            self.remote_rm_url,
             self.initial_model,
             self.tokenizer,
             self.prompt_max_len,
@@ -161,7 +162,7 @@ def _z3_params_to_fetch(param_list):
     ]
 
 
-@ray.remote(num_gpus=1)
+@ray.remote(num_gpus=1, runtime_env=RUNTIME_ENV)
 class ActorModelRayActor(BasePPORole):
     def init_model_from_pretrained(self, strategy: DeepspeedStrategy, pretrain):
         self._setup_distributed(strategy)
@@ -295,6 +296,7 @@ class ActorModelRayActor(BasePPORole):
         self,
         initial_model: ray.actor.ActorHandle,
         reward_model: List[ray.actor.ActorHandle],
+        remote_rm_url: List[str] = None,
         reward_fn: Callable[[List[torch.Tensor]], torch.Tensor] = None,
         vllm_engines: List[ray.actor.ActorHandle] = None,
     ):
@@ -308,6 +310,7 @@ class ActorModelRayActor(BasePPORole):
             self.actor,
             reward_model,
             initial_model,
+            remote_rm_url=remote_rm_url,
             ema_model=self.ema_model,
             actor_optim=None,
             actor_scheduler=self.actor_scheduler,

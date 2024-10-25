@@ -243,8 +243,11 @@ def _get_reward_model_mix(base_pretrained_model, base_llm_model):
             )
             last_hidden_states = outputs["last_hidden_state"]
 
-            #if "glm" in self._model_name:
-            #    last_hidden_states = last_hidden_states.transpose(0, 1)
+            batch_size = input_ids.shape[0]
+            if "glm" in self._model_name:
+                if last_hidden_states.shape[0] != batch_size:
+                    last_hidden_states = last_hidden_states.transpose(0, 1)
+
             values = self.value_head(last_hidden_states).squeeze(-1)
 
             VALID_INDEX = 1
@@ -338,8 +341,13 @@ def _get_reward_model(base_pretrained_model, base_llm_model):
             )
             last_hidden_states = outputs["last_hidden_state"]
 
+            # if "glm" in self._model_name:
+                # last_hidden_states = last_hidden_states.transpose(0, 1)
+            batch_size = input_ids.shape[0]
             if "glm" in self._model_name:
-                last_hidden_states = last_hidden_states.transpose(0, 1)
+                if last_hidden_states.shape[0] != batch_size:
+                    last_hidden_states = last_hidden_states.transpose(0, 1)
+                    
             values = self.value_head(last_hidden_states).squeeze(-1)
 
             if not process_supervision:
@@ -419,8 +427,12 @@ def _get_critic_model(base_pretrained_model, base_llm_model):
                 position_ids=position_ids,
             )
             last_hidden_states = outputs["last_hidden_state"]
+            # if "glm" in self._model_name:
+            #     last_hidden_states = last_hidden_states.transpose(0, 1)
+            batch_size = input_ids.shape[0]
             if "glm" in self._model_name:
-                last_hidden_states = last_hidden_states.transpose(0, 1)
+                if last_hidden_states.shape[0] != batch_size:
+                    last_hidden_states = last_hidden_states.transpose(0, 1)
                 
             values = self.value_head(last_hidden_states).squeeze(-1)[:, :-1]
             num_actions = action_mask.size(1)

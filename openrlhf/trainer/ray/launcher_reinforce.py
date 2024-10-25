@@ -100,6 +100,7 @@ class ReinforceRayActorGroup:
         self,
         initial_model_group: "ReinforceRayActorGroup",
         reward_model_groups: List["ReinforceRayActorGroup"],
+        remote_rm_url: List[str] = None,
         reward_fn: Callable[[List[torch.Tensor]], torch.Tensor] = None,
         vllm_engines: List = None,
     ):
@@ -109,12 +110,14 @@ class ReinforceRayActorGroup:
             initial_model_group (PPORayActorGroup): reference model group.
             reward_model_groups (PPORayActorGroup): reward model groups.
             reward_fn: reward calculate function, must be specified if using multiple reward models.
+            remote_rm_url: remote RM APIs,
             vllm_engines: vllm engines for text generation, if not specified, generate text by actor model directly.
 
         Returns:
             List: list of remote object refs.
         """
         assert (
+            remote_rm_url or 
             len(reward_model_groups) == 1 or reward_fn is not None
         ), "reward_fn must be specified if using multiple reward models"
 
@@ -127,14 +130,16 @@ class ReinforceRayActorGroup:
             initial_actor = initial_actors[i % len(initial_actors)]
 
             reward_actors = []
-            for reward_model_group in reward_model_groups:
-                actors = reward_model_group._actor_handlers
-                reward_actors.append(actors[i % len(actors)])
+            if not remote_rm_url:
+                for reward_model_group in reward_model_groups:
+                    actors = reward_model_group._actor_handlers
+                    reward_actors.append(actors[i % len(actors)])
 
             refs.append(
                 actor.fit.remote(
                     initial_model=initial_actor,
                     reward_model=reward_actors,
+                    remote_rm_url=remote_rm_url,
                     reward_fn=reward_fn,
                     vllm_engines=vllm_engines,
                     # whether this actor should triger corresponding critic model training

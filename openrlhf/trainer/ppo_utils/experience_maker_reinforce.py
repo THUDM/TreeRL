@@ -14,11 +14,102 @@ import json
 # from openrlhf.models.actor import Actor
 from openrlhf.models.utils import compute_reward, compute_reward_naive, masked_mean
 from openrlhf.utils.logging import init_logger
-from .experience_maker import RemoteExperienceMaker, Experience
+from .experience_maker import RemoteExperienceMaker, Experience, NaiveExperienceMaker
 
 
 logger = init_logger(__name__)
+
+
+class NaiveExperienceMakerReinforce(NaiveExperienceMaker):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+
+    @torch.no_grad()
+    def _make_experience(self, prompts: Union[str, List[str]], **generate_kwargs) -> Experience:
+        self.actor.eval()
+
+        experiences = self.sample_responses(
+            prompts,
+            getattr(self.strategy.args, "num_trace_per_sample", 1), 
+            **generate_kwargs
+        )
+        action_mask = experiences["action_mask"]
+        attention_mask = experiences["attention_mask"]
         
+        experience_reward = experiences["reward"]
+        # experience_reward[experience_reward < 0] *= 0.5
+        reward, kl = compute_reward_naive(
+            experience_reward,
+            self.kl_ctl.value,
+            experiences["action_log_probs"],
+            experiences["base_action_log_probs"],
+            action_mask=action_mask,
+            kl_as_reward=True,
+            process_reward=self.strategy.args.process_supervision
+        )
+        sample_kl = (kl.abs() * action_mask).sum(1) / action_mask.sum(1)
+        sample_kl_mask = (sample_kl <= 0.3).view(-1, 1).float()
+        reward = reward * sample_kl_mask
+        reward = reward.clamp(min=-0.5)
+
+        # * debuging
+        if self.strategy.get_rank() == 0:
+            print(f"----------- normalized_rewards: {experience_reward}, reward_with_kl: {reward}")
+        
+        def reformat_reward_for_info(piece):
+            if len(piece.shape) == 1:
+                return piece
+            elif self.strategy.args.process_supervision:
+                mask = piece != 0
+                piece = masked_mean(piece, mask, dim=-1)
+            elif piece.shape[1] > 1:
+                piece = masked_mean(piece, action_mask, dim=-1)
+            return piece
+
+        response_entropy = -(experiences["action_log_probs"] * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
+        
+        info = {
+            "kl": masked_mean(kl, action_mask, dim=-1),
+            "reward": reformat_reward_for_info(experiences["raw_reward"]),
+            "reward_normalized": reformat_reward_for_info(experiences["reward"]),
+            "response_length": action_mask.float().sum(dim=-1),
+            "total_length": attention_mask.float().sum(dim=-1),
+            "response_overlong_ratio": (action_mask[:, -1] == 0).float(),
+            "pass_rate": experiences["pass_rate"] if "pass_rate" in experiences else 0,
+            "response_entropy": response_entropy,
+        }
+
+        if self.strategy.args.perf:
+            info = self.log_perf(info, experiences, getattr(self.strategy.args, "num_trace_per_sample", 1))
+
+        # mask loss for eos_token
+        # eos_indices = action_mask.float().shape[1] - 1 - action_mask.float().fliplr().argmax(dim=1)
+        # mask = torch.arange(action_mask.size(1), device=action_mask.device).unsqueeze(0) == eos_indices.unsqueeze(1)
+        # reward = torch.where((reward < 0) * mask, torch.zeros_like(reward), reward)
+
+        experience = Experience(
+            sequences=experiences["sequences"],
+            action_log_probs=experiences["action_log_probs"],
+            advantages=reward,
+            attention_mask=attention_mask,
+            action_mask=action_mask,
+            info=info,
+            kl=kl
+        )
+
+        # send experience to critic
+        experience_cpu = deepcopy(experience)
+        experience_cpu.to_device("cpu")
+        # self._ref = self.critic.append.remote(experience_cpu)
+
+        self.actor.train()  # reset model state
+        return experience
+    
+    @torch.no_grad()
+    def make_experience(self, prompts: Union[str, List[str]], **generate_kwargs) -> Experience:
+        return self._make_experience(prompts, **generate_kwargs)
+
 
 class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
     def __init__(self, *args, vllm_engines: List = None, **kwargs):
@@ -85,7 +176,6 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
         action_mask = experiences["action_mask"]
         attention_mask = experiences["attention_mask"]
         
-            
         experience_reward = experiences["reward"]
         # experience_reward[experience_reward < 0] *= 0.5
         reward, kl = compute_reward_naive(
@@ -97,7 +187,11 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
             kl_as_reward=True,
             process_reward=self.strategy.args.process_supervision
         )
-                
+        sample_kl = (kl.abs() * action_mask).sum(1) / action_mask.sum(1)
+        sample_kl_mask = (sample_kl <= 0.3).view(-1, 1).float()
+        reward = reward * sample_kl_mask
+        reward = reward.clamp(min=-0.5)
+
         # * debuging
         if self.strategy.get_rank() == 0:
             print(f"----------- normalized_rewards: {experience_reward}, reward_with_kl: {reward}")
@@ -112,6 +206,8 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
                 piece = masked_mean(piece, action_mask, dim=-1)
             return piece
 
+        response_entropy = -(experiences["action_log_probs"] * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
+        
         info = {
             "kl": masked_mean(kl, action_mask, dim=-1),
             "reward": reformat_reward_for_info(experiences["raw_reward"]),
@@ -119,6 +215,8 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
             "response_length": action_mask.float().sum(dim=-1),
             "total_length": attention_mask.float().sum(dim=-1),
             "response_overlong_ratio": (action_mask[:, -1] == 0).float(),
+            "pass_rate": experiences["pass_rate"] if "pass_rate" in experiences else 0,
+            "response_entropy": response_entropy,
         }
 
         if self.strategy.args.perf:
@@ -151,3 +249,10 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
         "Ensure all experience has been send to critic"
         # ray.get(self._ref)
         self._ref = None
+
+
+def segment_actions(sequences, attention_mask, action_mask, tokenizer):
+    for seq, attn_mask, act_mask in zip(sequences, attention_mask, action_mask):
+        seq = seq[attn_mask.bool()]
+        text = tokenizer.decode(seq.tolist(), skip_special_tokens=False)
+        

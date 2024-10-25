@@ -70,6 +70,9 @@ class RemoteExperienceMakerPPO(RemoteExperienceMaker):
                 piece = masked_mean(piece, action_mask, dim=-1)
             return piece
         
+        response_entropy = -(experiences["action_log_probs"] * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
+        # response_entropy = -response_entropy.mean(dim=1
+
         info = {
             "kl": masked_mean(kl, action_mask, dim=-1),
             "reward": reformat_reward_for_info(experiences["raw_reward"]),
@@ -79,6 +82,8 @@ class RemoteExperienceMakerPPO(RemoteExperienceMaker):
             "response_length": action_mask.float().sum(dim=-1),
             "total_length": attention_mask.float().sum(dim=-1),
             "response_overlong_ratio": (action_mask[:, -1] == 0).float(),
+            "pass_rate": experiences["pass_rate"] if "pass_rate" in experiences else 0,
+            "response_entropy": response_entropy,
         }
         if self.strategy.args.perf:
             info = self.log_perf(info, experiences, getattr(self.strategy.args, "num_trace_per_sample", 1))

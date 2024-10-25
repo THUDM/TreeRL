@@ -1,11 +1,33 @@
+from functools import partial
+from multiprocessing.pool import Pool
+from multiprocessing.pool import ThreadPool
 import os
 from pathlib import Path
 import random
+import re
+import time
+from openai import OpenAI
 
 from datasets import Dataset, interleave_datasets, load_dataset
+import ray
+import requests
+import torch
+import torch.distributed
+from tqdm import tqdm
 from transformers import AutoTokenizer
+    
+from transformers.trainer import get_scheduler
+import math
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LambdaLR, ReduceLROnPlateau
+
+# from openai import OpenAI
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+import os
+
 
 from openrlhf.utils import DeepspeedStrategy
+
 
 DEFAULT_PAD_TOKEN = "[PAD]"
 DEFAULT_EOS_TOKEN = "</s>"
@@ -193,3 +215,511 @@ def convert_hh_to_json(dataset_name, cache_dir="hfdata"):
         test = [x for x in dataset["test"]]
         open(f"{output_dir}/test.jsonl", "w").writelines([json.dumps(x, ensure_ascii=False) + "\n" for x in test])
     
+
+def _get_cosine_schedule_with_warmup_lr_lambda(
+    current_step: int, *, num_warmup_steps: int, num_training_steps: int, num_cycles: float, min_lr: float = 0.0
+):
+    if current_step < num_warmup_steps:
+        return float(current_step) / float(max(1, num_warmup_steps))
+    progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+    return max(min_lr, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
+
+
+
+def get_cosine_schedule_with_warmup(
+    optimizer: Optimizer, num_warmup_steps: int, num_training_steps: int, num_cycles: float = 0.5, last_epoch: int = -1, min_lr: float = 0.0,
+):
+    """
+    Create a schedule with a learning rate that decreases following the values of the cosine function between the
+    initial lr set in the optimizer to 0, after a warmup period during which it increases linearly between 0 and the
+    initial lr set in the optimizer.
+
+    Args:
+        optimizer ([`~torch.optim.Optimizer`]):
+            The optimizer for which to schedule the learning rate.
+        num_warmup_steps (`int`):
+            The number of steps for the warmup phase.
+        num_training_steps (`int`):
+            The total number of training steps.
+        num_cycles (`float`, *optional*, defaults to 0.5):
+            The number of waves in the cosine schedule (the defaults is to just decrease from the max value to 0
+            following a half-cosine).
+        last_epoch (`int`, *optional*, defaults to -1):
+            The index of the last epoch when resuming training.
+
+    Return:
+        `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
+    """
+
+    lr_lambda = partial(
+        _get_cosine_schedule_with_warmup_lr_lambda,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_training_steps,
+        num_cycles=num_cycles,
+        min_lr=min_lr
+    )
+    return LambdaLR(optimizer, lr_lambda, last_epoch)
+
+
+# and considering the give prolem to solve
+
+# Problem: {question}
+
+EQUALITY_TEMPLATE = r"""
+Look at the following two expressions (answers to a math problem) and judge whether they are equivalent. Only perform trivial simplifications
+
+Examples:
+
+    Expression 1: $2x+3$
+    Expression 2: $3+2x$
+
+Yes
+
+    Expression 1: 3/2
+    Expression 2: 1.5
+
+Yes
+
+    Expression 1: $x^2+2x+1$
+    Expression 2: $y^2+2y+1$
+
+No
+
+    Expression 1: $x^2+2x+1$
+    Expression 2: $(x+1)^2$
+
+Yes
+
+    Expression 1: 3245/5
+    Expression 2: 649
+
+No
+(these are actually equal, don't mark them equivalent if you need to do nontrivial simplifications)
+
+    Expression 1: 2/(-3)
+    Expression 2: -2/3
+
+Yes
+(trivial simplifications are allowed)
+
+    Expression 1: 72 degrees
+    Expression 2: 72
+
+Yes
+(give benefit of the doubt to units)
+
+    Expression 1: 64
+    Expression 2: 64 square feet
+
+Yes
+(give benefit of the doubt to units)
+
+    Expression 1: C
+    Expression 2: C: (2,2)
+
+Yes
+(for multiple-choice question, matching the option or the value is both correct)
+
+    Expression 1: C: (2,2)
+    Expression 2: C
+
+Yes
+(for multiple-choice question, matching the option or the value is both correct)
+    Expression 1: 3
+    Expression 2: a = 3
+
+Yes
+
+    Expression 1: B
+    Expression 2: $\boxed{B}$
+
+Yes
+
+    Expression 1: 500/3π
+    Expression 2: \\frac{500}{3}\\pi
+    
+Yes
+(\\frac{a}{b} denotes fractions a/b, and \\pi equals to π)
+
+    Expression 1: 64
+    Expression 2: \\text{[number]}
+
+No
+
+    Expression 1: 64
+    Expression 2: \\text{[correct answer]}
+
+No
+
+    Expression 1: x = 2
+    Expression 2: 2
+
+Yes
+---
+
+YOUR TASK
+
+
+Respond with only "Yes" or "No" (without quotes). Do not include a rationale.
+
+    Expression 1: %(expression1)s
+    Expression 2: %(expression2)s
+
+""".strip()
+
+
+
+EXTRACTION_TEMPLATE = """
+Look at the following math problem and extract the final answer, such final results or option. If you cannot find an answer, return `No Answer`
+## Question: 
+{question}
+
+## Answer: 
+{answer}
+
+Put the answer in the format of the following example: 
+
+<ANSWER>: <your answer>
+
+Example:
+<ANSWER>: A
+<ANSWER>: A: 130
+<ANSWER>: a = 3
+<ANSWER>: 100
+<ANSWER>: No Answer
+
+If the question is a multiple-choice question, extract the option and value that matches the answer. Show the answer directly.
+
+Your response:
+"""
+
+
+def check_equality(urls, expr1: str, expr2: str, question: str):
+    if expr1 == expr2:
+        return True
+    
+    # prompt = EQUALITY_TEMPLATE % {"expression1": expr1, "expression2": expr2, "question": question}
+    prompt = EQUALITY_TEMPLATE % {"expression1": expr1, "expression2": expr2}
+    response = query_chatglm_platform(prompt=prompt, urls=urls)
+    if isinstance(response, str):
+        return response.lower().strip() == "yes"
+    else:
+        return False
+
+
+def check_result(urls, item):
+    question, response, label = item
+    original_response = response
+
+    if "<answer>" in response and "</answer>" in response:
+        resp_text = re.findall(r"<answer>([\s\S]+?)</answer>", response)
+        if len(resp_text) > 0:
+            resp_text = resp_text[-1].strip()
+        else:
+            resp_text = "\n".join(response.strip().split("\n")[-3:])
+            resp_text = resp_text.strip()
+    else:
+        response = response.strip().split("\n")
+        resp_text = [x for x in response if x.strip()]
+        resp_text = "\n".join(resp_text[-3:])    
+
+    # response = response.strip().split("\n")
+    # resp_text = [x for x in response if x.strip()]
+    # resp_text = "\n".join(resp_text[-3:])
+
+    # resp_text = resp_text[-1]
+    answer = None
+    if "\\box" in resp_text or "\\boxed" in resp_text:
+        # extract value in \box
+        answer = re.findall(r'\\box\{([^{}]*(?:\{[^{}]*\})*[^{}]*)\}', resp_text)
+        if len(answer) == 0:
+            answer = re.findall(r'\\boxed\{([^{}]*(?:\{[^{}]*\})*[^{}]*)\}', resp_text)
+
+    # if answer is None and "<answer>" in original_response:
+    #     answer = re.findall(r"<answer>([\s\S]+?)</answer>", original_response)
+
+    if answer: 
+        answer = answer[0].strip()
+    else:
+        answer_template = EXTRACTION_TEMPLATE.format(question=question, answer=resp_text)
+        extracted_answer = query_chatglm_platform(answer_template, urls=urls)
+        # answer = extracted_answer[10:]
+        # answer = answer.replace("<ANSWER>: ", "").strip()
+        if extracted_answer is None:
+            answer = ""
+        else:
+            # answer = extracted_answer[10:]
+            answer = extracted_answer.replace("<ANSWER>: ", "").strip()
+    check = check_equality(urls, answer, label, question)
+
+    return answer, 1 if check else 0
+
+
+def query_chatglm_platform(
+    prompt, 
+    history=[], 
+    do_sample=True, 
+    max_tokens=256, 
+    urls=None
+):
+    # url = "http://xxx/v1/chat/completions"
+
+    messages = []
+    for turn in history:
+        messages.append({
+            "role": "user",
+            "content": turn["prompt"],
+        })
+        messages.append({
+            "role": "assistant",
+            "content": turn["response"],
+        })
+    messages.append({
+        "role": "user",
+        "content": prompt,
+    })
+
+    temperature = 0.4
+    top_p = 0.1
+    payload = {
+        "messages": messages,
+        "temperature": temperature,
+        "top_p": top_p,
+        # "model": self.model_version,
+        "max_tokens": max_tokens,
+        "do_sample": do_sample,
+        "stream": False,
+        "seed": random.randint(1, 10000000),
+    }
+
+    # response = requests.post(self.url, data=payload, headers=self.headers, verify=False)
+    answer = None
+    
+    # if ":8000" in urls[0]:
+    #     client = OpenAI(
+    #         base_url=random.choice(urls), 
+    #         api_key="test",
+    #     )
+    # else:
+    #     client = None
+        
+    for _ in range(4):
+        url = random.choice(urls)
+        if ":8080" in url:
+            answer = query_chatglm_tgi(prompt, history, do_sample=True, url=url, temperature=temperature, top_p=top_p, max_tokens=max_tokens, max_retry=1)
+        elif ":8000" in url:
+            answer = query_vllm_platform(prompt, history, do_sample=True, url=url, max_tokens=max_tokens, max_retry=1)
+        else:
+            try:
+                response = requests.post(url, json=payload, verify=False)
+            except Exception as e:
+                print(e)
+                continue
+            
+            if response.status_code == 200:
+                answer = json.loads(response.text)
+                # print(answer)
+                # if answer["choices"][0]["finish_reason"] != "eos_token":
+                    # answer = None
+                # else:
+                answer = answer["choices"][0]["message"]["content"]
+            else:
+                print(f"******* try to send request to {url}, but got {response.text}")
+                answer = None
+                
+        if answer is not None:
+            break
+
+    return answer
+
+
+# def query_vllm_platform(client, prompt, history=[], do_sample=True, max_tokens=4096, max_retry=2):
+    # # if url is None:
+    #     # url = "http://172.18.64.19:9090/v1/chat/completions"
+    # messages = []
+    # for turn in history:
+    #     messages.append({
+    #         "role": "user",
+    #         "content": turn["prompt"],
+    #     })
+    #     messages.append({
+    #         "role": "assistant",
+    #         "content": turn["response"],
+    #     })
+    # messages.append({
+    #     "role": "user",
+    #     "content": prompt,
+    # })
+
+    # for _ in range(max_retry):
+    #     try:
+    #         completion = client.chat.completions.create(
+    #             model="Meta-Llama-3.1-70B-Instruct",
+    #             messages=messages,
+    #             max_tokens=max_tokens,
+    #         )
+    #         if completion.choices:
+    #             answer = completion.choices[0].message.content
+    #             break
+    #         else:
+    #             continue
+    #     except Exception as e:
+    #         print(f"error in vllm requests: {e}")
+    #         # exit(0)
+    #         time.sleep(1)
+    #         continue
+    # else:
+    #     answer = None
+
+    # return answer
+
+
+def query_vllm_platform(prompt, history=[], do_sample=True, url=None, max_tokens=4096, max_retry=2):
+    if url is None:
+        url = "http://172.20.65.211:8000/v1"
+    url = url + "/chat/completions"
+    messages = [
+        {
+            "role": "user",
+            "content": prompt,
+        }
+    ]
+    # 这里 model 名称随便填都行
+    request_data = {
+        "model": "Meta-Llama-3.1-70B-Instruct",
+        "messages": messages,
+        "temperature": 0,
+        "max_tokens": max_tokens,
+    }
+    for _ in range(max_retry):
+        try:
+            response = requests.post(
+                url,
+                json=request_data,
+                headers={"Content-Type": "application/json"}
+            )
+            if response.status_code == 200:
+                resp_json = response.json()
+                content = resp_json['choices'][0]['message']['content'].strip()
+                return content
+            else:
+                print(
+                    f"Failed to fetch response: {response.status_code}, {response.text}"
+                )
+        except Exception as e:
+            print(f"error in vllm, exception: {e}, url={url}")
+            
+    return None
+
+
+def query_chatglm_tgi(prompt, history=[], do_sample=False, max_tokens=256, max_retry=3, url=None, temperature=0.4, top_p=0.1):
+    messages = ""
+    for turn in history:
+        ques, ans = turn["prompt"], turn["response"]
+        messages += f"<|user|>\n{ques}<|assistant|>\n{ans}"
+
+    messages += f"<|user|>\n{prompt}<|assistant|>\n"
+    inputs = {
+        "inputs": messages,
+        "stream": False,
+        "parameters": {
+            "best_of": 1,
+            "decoder_input_details": False,
+            "details": False,
+            "do_sample": do_sample,
+            "max_new_tokens": max_tokens,
+            "return_full_text": False,
+            "seed": None,
+            # "temperature": temperature,
+            # "top_p": top_p,
+            "stop": ["<|endoftext|>", "<|user|>", "<|observation|>"]
+        }
+    }
+   
+    for _ in range(max_retry):
+        try:
+            output = requests.post(url, json=inputs)
+            if output.status_code == 200:
+                output = json.loads(output.text)
+                # results.append(output[0]["generated_text"])
+                result = output["generated_text"]
+                break
+            else:
+                print(output.text)   
+        except:
+            print("error in tgi requests")
+            continue
+    else:
+        result = None
+
+    return result
+
+
+def map_with_progress(f: callable, xs: list[Any], num_threads: int = 50):
+    """
+    Apply f to each element of xs, using a ThreadPool, and show progress.
+    """
+    # if os.getenv("debug"):
+        # return list(map(f, xs, total=len(xs)))
+    # else:
+    if len(xs) == 0:
+        return []
+    
+    # start = time.time()
+    with ThreadPool(min(num_threads, len(xs))) as pool:
+    # with Pool(min(num_threads, len(xs))) as pool:
+        return list(pool.imap(f, xs))
+
+
+# class GLM4Sampler(object):
+#     """
+#     Sample from TGI's completion API
+#     """
+
+#     def __init__(
+#         self,
+#         url: str = "https://api.chatglm.dev:8443/v1",
+#         model: str = "glm-4-public",
+#         api_key: str = 'None',
+#         system_message: Optional[str] = None,
+#         temperature: float = 0.1,
+#         max_tokens: int = 1024,
+#     ):
+#         self.system_message = system_message
+#         self.temperature = temperature
+#         self.max_tokens = max_tokens
+#         self.url = url
+#         # self.url = "http://172.18.64.38:9090/v1"
+
+#         self.model = model
+#         os.environ["OPENAI_API_KEY"] = api_key if api_key else "test"
+        
+#         self.client = OpenAI(base_url=self.url, timeout=360)
+
+#     def get_resp(self, message_list):
+#         for i in range(5):
+#             try:
+#                 stream = self.client.chat.completions.create(
+#                     messages=message_list,
+#                     model=self.model,
+#                     temperature=self.temperature,
+#                     top_p=0.1,
+#                     stream=True,
+#                     max_tokens=self.max_tokens
+#                 )
+#                 output = ''
+#                 for part in stream:
+#                     output += part.choices[0].delta.content
+#                 return output
+#             except Exception as e:
+#                 print(e)
+#                 continue
+#         print("failed")
+#         return ''
+
+#     def __call__(self, message_list) -> str:
+#         if self.system_message:
+#             message_list = [{"role": "system", "content": self.system_message}] + message_list
+#         return self.get_resp(message_list)
+
+
