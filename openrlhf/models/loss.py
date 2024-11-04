@@ -134,6 +134,8 @@ class ReinforcePolicyLoss(nn.Module):
         
         # -- original implementation
         ratio = (log_probs - old_log_probs).exp()
+        # log_probs = log_probs.clamp(min=-5)
+
         surr1 = ratio * rewards
         surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * rewards
         loss = -torch.min(surr1, surr2)

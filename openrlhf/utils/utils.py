@@ -464,6 +464,9 @@ def query_chatglm_platform(
 ):
     # url = "http://xxx/v1/chat/completions"
 
+    if isinstance(urls, str):
+        urls = [urls]
+        
     messages = []
     for turn in history:
         messages.append({
@@ -723,3 +726,27 @@ def map_with_progress(f: callable, xs: list[Any], num_threads: int = 50):
 #         return self.get_resp(message_list)
 
 
+
+
+def split_text_by_tags(text):
+    """
+    Splits the input text into segments, where each segment starts with
+    <understand>, <action>, or <reflection> and includes everything up to
+    the next tag or the end of the text, keeping the tags and content together.
+
+    Args:
+        text (str): The input text to split.
+
+    Returns:
+        List[str]: A list of segments, each including the tags and the enclosed content.
+    """
+    # Define the pattern to match the tags and their content
+    pattern = r'(<(understand|action|reflection)>.*?(?:</\2>)?)(?=(<(understand|action|reflection)>|$))'
+
+    # Use re.findall to find all matches, including the tags and their content
+    matches = re.findall(pattern, text, re.DOTALL)
+
+    # Extract the full match from each tuple in matches
+    segments = [match[0] for match in matches]
+
+    return segments

@@ -22,7 +22,8 @@ from openrlhf.utils.remote_reward import (
     _remote_binary_judge_evaluation,
     find_repeated_patterns,
     get_rule_base_rewards,
-    detect_repeated_patterns
+    detect_repeated_patterns,
+    get_remote_reward_entry
 )
 from openrlhf.utils.logging import init_logger
 from openrlhf.datasets.reward_dataset import (
@@ -49,7 +50,8 @@ def normalize_reward_from_multi_traces(
         num_trace_per_sample,
         min_threshold=0,
         batch_first=False,
-        div_std=True
+        div_std=True,
+        mask=None
     ):
     reward_raw = reward.clone()
 
@@ -57,11 +59,15 @@ def normalize_reward_from_multi_traces(
         if reward.numel() != batch_size * num_trace_per_sample:
             print(f"******* Problem: {reward.shape} != {batch_size} * {num_trace_per_sample}") 
             reward = reward.view(num_trace_per_sample, -1)
+            # mask = torch.ones_like(reward) if mask is None else mask.view(num_trace_per_sample, -1)
         else:
             reward = reward.view(num_trace_per_sample, batch_size)
-        
+            # mask = torch.ones_like(reward) if mask is None else mask.view(num_trace_per_sample, batch_size)
+
         mean = reward.mean(dim=0).view(1, -1)
         std = reward.std(dim=0).view(1, -1)
+        std = std.clamp(min=1/3)
+
         reward = reward - mean
         if div_std:
             reward = reward / (std + 1e-6)
@@ -78,6 +84,8 @@ def normalize_reward_from_multi_traces(
         reward = reward.view(batch_size, num_trace_per_sample)
         mean = reward.mean(dim=1).view(-1, 1)
         std = reward.std(dim=1).view(-1, 1)
+        std = std.clamp(min=1/3)
+
         reward = reward - mean
         if div_std:
             reward = reward / (std + 1e-6)
@@ -87,6 +95,8 @@ def normalize_reward_from_multi_traces(
             reward_mask = (reward_raw.abs() > min_threshold) | (reward_raw > 0)
             reward_mask = reward_mask.float()
             reward = reward * reward_mask
+
+        reward = reward.clamp(min=-0.4)
         reward = reward.view(-1)
     return reward
     
@@ -107,6 +117,7 @@ def normalize_reward_from_multi_traces_rloo(
         num_trace_per_sample,
         min_threshold=0,
         batch_first=False,
+        mask=None
     ):
     reward_raw = reward.clone()
 
@@ -114,12 +125,18 @@ def normalize_reward_from_multi_traces_rloo(
         if reward.numel() != batch_size * num_trace_per_sample:
             print(f"******* Problem: {reward.shape} != {batch_size} * {num_trace_per_sample}") 
             reward = reward.view(num_trace_per_sample, -1)
+            mask = torch.ones_like(reward) if mask is None else mask.view(num_trace_per_sample, -1)
         else:
             reward = reward.view(num_trace_per_sample, batch_size)
-        
+            mask = torch.ones_like(reward) if mask is None else mask.view(num_trace_per_sample, batch_size)
+ 
         # mean = reward.mean(dim=0).view(1, -1)
+        # mean = (_sum - reward) / (reward.size(0) - 1) 
+
+        reward = reward * mask
         _sum = reward.sum(dim=0).view(1, -1)
-        mean = (_sum - reward) / (reward.size(0) - 1) 
+        mask_num = mask.sum(dim=0).view(1, -1) - 1
+        mean = (_sum - reward) / (mask_num + 1e-6)
         # std = reward.std(dim=0).view(1, -1)
         reward = reward - mean
         # reward = reward / (std + 1e-6)
@@ -133,12 +150,20 @@ def normalize_reward_from_multi_traces_rloo(
         
         reward = reward.view(-1)
     else:
+        # added
+        mask = mask.view(batch_size, num_trace_per_sample) if mask is not None else torch.ones_like(mask)
+        mask_num = mask.sum(dim=1).view(-1, 1) - 1
+
         reward = reward.view(batch_size, num_trace_per_sample)
+        reward = reward * mask
         _sum = reward.sum(dim=1).view(-1, 1)
         # mean = reward.mean(dim=1).view(-1, 1)
-        mean = (_sum - reward) / (reward.size(1) - 1)
-        # std = reward.std(dim=1).view(-1, 1)
+        # mean = (_sum - reward) / (reward.size(1) - 1)
+        mean = (_sum - reward) / (mask_num + 1e-6)
         reward = reward - mean
+        lower_bound = -reward.max(1)[0].view(-1, 1)
+        reward = torch.max(reward, lower_bound)
+        
         # reward = reward / (std + 1e-6)
         if min_threshold > 0:
             reward_raw = reward_raw.view(batch_size, num_trace_per_sample)
@@ -147,6 +172,7 @@ def normalize_reward_from_multi_traces_rloo(
             reward_mask = reward_mask.float()
             reward = reward * reward_mask
         reward = reward.view(-1)
+
     return reward
     
     # reward = reward.view(batch_size, num_trace_per_sample)
@@ -1429,7 +1455,9 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         _attention_masks_actions = []
         _attention_masks_inputs = []
         
-        if isinstance(prompts, list) and len(prompts) == 2: 
+        old_style = isinstance(prompts, list) and len(prompts) == 2 and not isinstance(prompts[0], str)
+
+        if old_style: 
             # [[prompt], [history]]
             assert False
             micro_batch_size_roll_out = batch_size = len(prompts[0])
@@ -1458,7 +1486,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         # prompts = prompts * num_trace_per_sample
 
         batch_first = True
-        old_style = isinstance(prompts, list) and len(prompts) == 2 and not isinstance(prompts[0], str)
 
         if batch_first:
             if old_style:
@@ -1560,17 +1587,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
 
                 if self.reward_model:
                     for rm in self.reward_model:
-                        # if self.critic and self.strategy.args.critic_pretrain and (self.strategy.args.reward_pretrain != self.strategy.args.critic_pretrain):
-                        #     assert False
-                        #     micro_sequences_cpu_rm, micro_attention_mask_cpu_rm = self.retokenize(micro_sequences_cpu, self.tokenizer, self.tokenizer_reward)
-                        #     assert micro_sequences_cpu_rm.max() < self.tokenizer_reward.vocab_size, f"micro_sequences_cpu_rm: {micro_sequences_cpu_rm}"
-                        #     assert micro_sequences_cpu_rm.min() >= 0, f"micro_sequences_cpu_rm: {micro_sequences_cpu_rm}"
-                        #     # print(f"micro_sequences_cpu_rm: {micro_sequences_cpu_rm.shape}")
-                        #     assert micro_sequences_cpu_rm.shape[1] < 9216, f"micro_sequences_cpu_rm: {micro_sequences_cpu_rm.shape}"
-                            
-                        # else:
-                            # print(self.strategy.args.process_supervision, self.strategy.args.critic_pretrain, self.strategy.args.reward_pretrain)
-                            # assert False, f"not implemented yet"
 
                         micro_sequences_cpu_rm, micro_attention_mask_cpu_rm = micro_sequences_cpu, micro_attention_mask_cpu
 
@@ -1659,8 +1675,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         attention_mask_action = zero_pad_batch(_attention_masks_actions, side="right")
         attention_mask_input = zero_pad_batch(_attention_masks_inputs, side="left")
 
-        # attention_mask = zero_pad_batch(_attention_mask, side="right")
-        # sequences = zero_pad_batch(_sequences, side="right", pad_token_id=self.tokenizer.pad_token_id)
         sequences = torch.cat([inputs, actions], dim=1)
         attention_mask = torch.cat([attention_mask_input, attention_mask_action], dim=1)
 
@@ -1668,29 +1682,89 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         base_action_log_probs = zero_pad_batch(_base_action_log_probs, side="right")
 
         if self.remote_reward_url:
+            if _sources is None:
+                _sources = ["stem"] * len(queries)    
+            
             _raw_r_remote = [item for sublist in _raw_r_remote for item in sublist]
             queries = [item for sublist in _raw_r_remote for item in sublist[0]]
             labels = [item for sublist in _raw_r_remote for item in sublist[1]]
-            _remote_rm_urls = load_reward_url(self.remote_reward_url[0])
+            queries = [(x[0], x[1], y) for x, y in zip(queries, labels)]
+            
+            input_queries = [{
+                "prompt": x[0],
+                "response": x[1],
+                "label": x[2],
+                "data_type": y
+            } for x, y in zip(queries, _sources)]
+            
+            assert ".json" in self.remote_reward_url[0], f"remote_reward_url: {self.remote_reward_url}"
+
+            with open(self.remote_reward_url[0], "r") as f:
+                _remote_rm_urls = json.load(f)
+
+            (
+                extracted_answer, 
+                raw_remote_rewards, 
+                binary_reward
+            ) = get_remote_reward_entry(
+                _remote_rm_urls, 
+                input_queries,
+                self.tokenizer,
+                overlong_mask,
+                use_general_reward_for_reason=self.strategy.args.use_general_reward_for_stem,
+                use_rule_based_reward=self.strategy.args.use_rule_based_reward,
+            )
+            raw_remote_rewards = raw_remote_rewards.to(torch.cuda.current_device())
             
             print(f"--------******* num_queries: {len(queries)}, num_labels: {len(labels)}, length_ratio: {overlong_mask.sum() / overlong_mask.numel()}")
-
-            assert len(queries) == len(labels)
-            extracted_answer, raw_remote_rewards = _remote_binary_judge_evaluation(_remote_rm_urls, queries, labels)
-            raw_remote_rewards = raw_remote_rewards.to(torch.cuda.current_device())
-            binary_reward = raw_remote_rewards
             
-            if len(self.remote_reward_url) > 1:
-                _remote_model_rm_urls = load_reward_url(self.remote_reward_url[1])
-                rm_based_rewards = _remote_reward_model_evaluation(_remote_model_rm_urls, queries)
-                rm_based_rewards = rm_based_rewards.to(torch.cuda.current_device())
-                rm_based_rewards = torch.sigmoid(0.5 * rm_based_rewards)
-                raw_remote_rewards = raw_remote_rewards + rm_based_rewards
 
-            if self.strategy.args.use_rule_based_reward:
-                rule_rewards = get_rule_base_rewards(queries, use_expected_pattern=True)
-                rule_rewards = rule_rewards.to(torch.cuda.current_device())
-                raw_remote_rewards = raw_remote_rewards + rule_rewards
+            ### old implementation
+            # if _sources is None:
+            #     _sources = ["stem"] * len(queries)    
+
+            # _raw_r_remote = [item for sublist in _raw_r_remote for item in sublist]
+            # queries = [item for sublist in _raw_r_remote for item in sublist[0]]
+            # labels = [item for sublist in _raw_r_remote for item in sublist[1]]
+            # _remote_rm_urls = load_reward_url(self.remote_reward_url[0])
+            
+            # print(f"--------******* num_queries: {len(queries)}, num_labels: {len(labels)}, length_ratio: {overlong_mask.sum() / overlong_mask.numel()}")
+
+            # assert len(queries) == len(labels)
+            # extracted_answer, raw_remote_rewards = _remote_binary_judge_evaluation(_remote_rm_urls, queries, labels)
+            # raw_remote_rewards = raw_remote_rewards.to(torch.cuda.current_device())
+            # binary_reward = raw_remote_rewards
+
+            # if len(self.remote_reward_url) > 1:
+            #     _remote_model_rm_urls = load_reward_url(self.remote_reward_url[1])
+            #     queries4rm = []
+            #     for item in queries:
+            #         inp_len = self.tokenizer.encode(item[0], add_special_tokens=False) 
+            #         oup_len =  self.tokenizer.encode(item[1], add_special_tokens=False)
+            #         length = inp_len + oup_len
+            #         max_len = 8050
+
+            #         if length > max_len:
+            #             queries4rm.append(
+            #                 (
+            #                     item[0], 
+            #                     self.tokenizer.decode(self.tokenizer.encode(item[1], add_special_tokens=False)[-(max_len - inp_len):])
+            #                 )
+            #             )
+            #         else:
+            #             queries4rm.append((item[0], item[1]))
+
+            #     rm_based_rewards = _remote_reward_model_evaluation(_remote_model_rm_urls, queries4rm)
+            #     rm_based_rewards = rm_based_rewards.to(torch.cuda.current_device())
+            #     # rm_based_rewards = torch.sigmoid(0.5 * rm_based_rewards)
+            #     rm_based_rewards = torch.sigmoid(rm_based_rewards)
+            #     raw_remote_rewards = raw_remote_rewards + rm_based_rewards
+
+            # if self.strategy.args.use_rule_based_reward:
+            #     rule_rewards = get_rule_base_rewards(queries, use_expected_pattern=True)
+            #     rule_rewards = rule_rewards.to(torch.cuda.current_device())
+            #     raw_remote_rewards = raw_remote_rewards + rule_rewards
+            #### old implementation
 
             r_remote = raw_remote_rewards
             if self.strategy.get_rank() <= 3:
@@ -1698,9 +1772,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 print(f"---------- queries: {queries[0]}, extracted_answer: {extracted_answer[0]}, labels: {labels[0]}, raw_rewards: {raw_remote_rewards[0]}")
             # r = [raw_rewards]
             if self.strategy.args.mask_repeated_samples:
-                # repeated_mask = detect_repeated_patterns(queries, pattern_length=20, threshold=15).to(torch.cuda.current_device())
-                # repeated_mask2 = detect_repeated_patterns(queries, pattern_length=10, threshold=70).to(torch.cuda.current_device())
-                # repeated_mask = (repeated_mask.bool() & repeated_mask2.bool()).float()
                 repeated_mask = overlong_mask
             else:
                 repeated_mask = 1
@@ -1711,11 +1782,11 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
 
         if self.reward_model:
             r_model = torch.cat(_raw_r, dim=0)
-            # binary_reward = None
         else:
             r_model = 0
 
         r = r_remote + r_model
+        _raw_reward = r
 
         if self.strategy.args.mask_repeated_samples:
             r = r * repeated_mask
@@ -1725,7 +1796,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         else:
             value = None
 
-        _raw_reward = r
         assert not (self.strategy.args.normalize_reward_from_multi_traces_with_rloo and self.strategy.args.normalize_reward_from_multi_traces), f"normalize_reward_from_multi_traces_with_rloo and normalize_reward_from_multi_traces cannot be set to True at the same time"
             
         if num_trace_per_sample > 1: # and not self.remote_reward_url:
@@ -1738,7 +1808,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     num_trace_per_sample,
                     min_threshold=getattr(self.strategy.args, "min_reward_gap", 0.0),
                     batch_first=batch_first,
-                    div_std=div_std
+                    div_std=div_std,
+                    mask=repeated_mask
                 )
             if self.strategy.args.normalize_reward_from_multi_traces_with_rloo:
                 r = normalize_reward_from_multi_traces_rloo(
@@ -1747,25 +1818,36 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     num_trace_per_sample,
                     min_threshold=getattr(self.strategy.args, "min_reward_gap", 0.0),
                     batch_first=batch_first,
+                    mask=repeated_mask
                     # div_std=div_std   
                 )   
+                
         if self.strategy.args.mask_repeated_samples:
             r = r * repeated_mask
-        
 
         if self.remote_reward_url:
-            if batch_first:
-                judge_rwd = binary_reward.view(batch_size, num_trace_per_sample)
+            assert batch_first, f"batch_first must be set to True: {batch_first}"
+            binary_reward = [x for x in binary_reward if x is not None]
+            if len(binary_reward) == 0:
+                pass_rate = torch.zeros(action_log_probs.shape[0], device=device) + 0.1
             else:
-                judge_rwd = binary_reward.view(num_trace_per_sample, batch_size).transpose(0, 1)
-            margin = 0.1 if self.strategy.args.use_rule_based_reward else 0
-            pass_rate = ((judge_rwd > margin).sum(1) > 0).float()
-            pass_rate = pass_rate.repeat(num_trace_per_sample)
+                judge_rwd = torch.tensor(binary_reward).view(-1, num_trace_per_sample)
+                
+                # if batch_first:
+                # judge_rwd = judge_rwd.view(batch_size, num_trace_per_sample)
+                # else:
+                    # judge_rwd = binary_reward.view(num_trace_per_sample, batch_size).transpose(0, 1)
+                # margin = 0.1 if self.strategy.args.use_rule_based_reward else 0
+                margin = 0
+                pass_rate = ((judge_rwd > margin).sum(1) > 0).float()
+                pass_rate = pass_rate.repeat(batch_size * num_trace_per_sample)[:batch_size * num_trace_per_sample]
+                pass_rate = pass_rate.to(action_log_probs.device)
 
-            sample_pass_rate = (judge_rwd > margin).float().sum(1) / judge_rwd.shape[1]
-            pass_rate_mask = (sample_pass_rate <= 0.8).float().repeat_interleave(judge_rwd.shape[1])
-            assert pass_rate_mask.shape == r.shape, f"pass_rate_shape: {pass_rate_mask.shape}, r_shape: {r.shape}"
-            r = r * pass_rate_mask
+                if self.strategy.args.mask_pass_confident_samples:
+                    sample_pass_rate = (judge_rwd > margin).float().sum(1) / judge_rwd.shape[1]
+                    pass_rate_mask = (sample_pass_rate < 0.8).float().repeat_interleave(judge_rwd.shape[1])
+                    assert pass_rate_mask.shape == r.shape, f"pass_rate_shape: {pass_rate_mask.shape}, r_shape: {r.shape}"
+                    r = r * pass_rate_mask
         else:
             pass_rate = torch.zeros(action_log_probs.shape[0], device=device)
 
@@ -1988,19 +2070,50 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         return self.actor.generate(**inputs, **kwargs)
     
     
-    def top_k_sampling(self, vllm_engine, input_ids, params):
-        params = copy.deepcopy(params)
-        params.logprobs = 4
+    def top_k_sampling(self, vllm_engine, prompts, params):
+        """_summary_
+
+        Args:
+            vllm_engine (_type_): _description_
+            prompts: List(Tuple(prompt, history))
+            params (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        # _prompts = [prompt.strip() + prefix_text for prompt in prompts[0]]
+        # prompts = [_prompts, prompts[1]]
+        input_ids = self.tokenize_fn(prompts, self.prompt_max_len, device="cpu")["input_ids"]
+        prefix_text = "<understanding>\n"
+        prefix_tokens = self.tokenizer.encode(prefix_text, add_special_tokens=False)
+
+        top_k = 4
+        params = deepcopy(params)
+        params.logprobs = top_k
         params.max_tokens = 1
+        params.temperature = 5
+        params.top_k = 16
+        params.min_p = 0
+        
+        pad_indices = (input_ids != self.tokenizer.pad_token_id).to(dtype=torch.int).argmax(dim=-1)
+        prompt_token_ids = []
+        for i, pad_index in enumerate(pad_indices.numpy()):
+            input_id = input_ids[i][pad_index:].tolist()
+            input_id.extend(prefix_tokens)
+            prompt_token_ids.append(input_id)
+        
         input_ids_with_next_token = []
-        outputs = ray.get(vllm_engine.generate.remote(sampling_params=params, prompt_token_ids=input_ids))
-        for prompt_id, output in zip(input_ids, outputs):
-            logprobs = output.logprobs[0]
-            used_logprobs = [k for k, v in logprobs.items() if v > -5]
+        outputs = ray.get(vllm_engine.generate.remote(sampling_params=params, prompt_token_ids=prompt_token_ids))
+        for prompt_id, output in zip(prompt_token_ids, outputs):
+            logprobs = output.outputs[0].logprobs[0]
+            used_logprobs = [k for k, v in logprobs.items() if v.logprob > -10]
+            if len(used_logprobs) == 0:
+                used_logprobs = [k for k in logprobs.keys()]
             next_token = random.choice(used_logprobs)
-            _prompt_id = torch.cat([prompt_id, torch.tensor([next_token]).to(input_ids.device)])
+            # _prompt_id = torch.cat([prompt_id, torch.tensor([next_token]).to(input_ids.device)])
+            _prompt_id = prompt_id + [next_token]
             input_ids_with_next_token.append(_prompt_id)
-        return torch.stack(input_ids_with_next_token)
+        return input_ids_with_next_token
 
     def _generate_vllm(self, prompts: List[str], **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         from vllm import SamplingParams
@@ -2025,23 +2138,46 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             # stop_token_ids=[self.tokenizer.convert_tokens_to_ids("<|user|>"), self.tokenizer.convert_tokens_to_ids("<|observation|>")],
             stop_token_ids=list(eos_token_set),
             min_tokens=kwargs.get("min_new_tokens ", 1),
-            min_p=0.05,
+            min_p=self.strategy.args.min_p,
             # stop=["<|user|>", "<|observation|>"],
         )
 
         # TODO: can't pass `max_length` to vLLM's tokenizer for input truncation, remove this once it is supported.
         input_ids = self.tokenize_fn(prompts, self.prompt_max_len, device="cpu")["input_ids"]
 
-        # if self.strategy.args.use_random_top_k_logits_sampling:
-        #     input_ids = self.top_k_sampling(llm, input_ids, sampling_params)
+        if self.strategy.args.use_random_top_k_logits_sampling:
+            prompt_token_ids = self.top_k_sampling(llm, prompts, sampling_params)
+        else:
+            # assert self.tokenizer.padding_side == "left", f"tokenizer padding_size should be left"
+            pad_indices = (input_ids != self.tokenizer.pad_token_id).to(dtype=torch.int).argmax(dim=-1)
+            prompt_token_ids = []
+            for i, pad_index in enumerate(pad_indices.numpy()):
+                prompt_token_ids.append(input_ids[i][pad_index:].tolist())
 
-        # assert self.tokenizer.padding_side == "left", f"tokenizer padding_size should be left"
-        pad_indices = (input_ids != self.tokenizer.pad_token_id).to(dtype=torch.int).argmax(dim=-1)
-        prompt_token_ids = []
-        for i, pad_index in enumerate(pad_indices.numpy()):
-            prompt_token_ids.append(input_ids[i][pad_index:].tolist())
-        outputs = ray.get(llm.generate.remote(sampling_params=sampling_params, prompt_token_ids=prompt_token_ids))
+        if not getattr(self.strategy.args, "random_temperature", False):
+            outputs = ray.get(llm.generate.remote(sampling_params=sampling_params, prompt_token_ids=prompt_token_ids))
+        else:
+            num_traces_per_sample = self.strategy.args.num_trace_per_sample
+            assert len(prompt_token_ids) % num_traces_per_sample == 0, f"len(prompt_token_ids): {len(prompt_token_ids)}, num_traces_per_sample: {num_traces_per_sample}"
+            batch_prompt_tokens_ids = [prompt_token_ids[i:i + num_traces_per_sample] for i in range(0, len(prompt_token_ids), num_traces_per_sample)]
 
+            batch_size = len(batch_prompt_tokens_ids)
+            batch_prompt_tokens_ids_part = [batch_prompt_tokens_ids[i][0] for i in range(batch_size) for _ in range(num_traces_per_sample // 2)]
+
+            temperature = random.uniform(0.95, kwargs.get("temperature", 1.0))
+            sampling_params.temperature = temperature
+            outputs_part1 = ray.get(llm.generate.remote(sampling_params=sampling_params, prompt_token_ids=batch_prompt_tokens_ids_part))
+            
+            temperature = random.uniform(0.95, kwargs.get("temperature", 1.0))
+            sampling_params.temperature = temperature
+            outputs_part2 = ray.get(llm.generate.remote(sampling_params=sampling_params, prompt_token_ids=batch_prompt_tokens_ids_part))
+            outputs = []
+            for i in range(batch_size):
+                outputs.extend(outputs_part1[i * (num_traces_per_sample // 2): (i + 1) * (num_traces_per_sample // 2)])
+                outputs.extend(outputs_part2[i * (num_traces_per_sample // 2): (i + 1) * (num_traces_per_sample // 2)])
+
+            assert len(outputs) == len(prompts[0]), f"len(outputs): {len(outputs)}, len(prompts): {len(prompts)}"
+            
         # NOTE: concat all outputs to following format:
         #
         # | [PAD] [PAD] token token token | token token [EOS] [PAD] |
@@ -2101,3 +2237,16 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         "Ensure all experience has been send to critic"
         ray.get(self._ref)
         self._ref = None
+
+    def step_value(self, sequences, action_mask, attention_mask):
+        """_summary_
+
+        Args:
+            sequences (_type_): _description_
+            action_mask (_type_): _description_
+            attention_mask (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        pass

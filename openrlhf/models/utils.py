@@ -50,20 +50,17 @@ def compute_reward_naive(
     if kl_coef <= 0.0:
         kl_coef = 0.0
         
-    clip_reward_range = 1.0
+    clip_reward_range = 1.5
 
     kl = compute_approx_kl(log_probs, log_probs_base, action_mask=action_mask)
     # kl = compute_kl(log_probs, log_probs_base, action_mask=action_mask)
 
-    # kl_reward = kl_reward.clamp(min=-5, max=5)
-    # kl_reward = -kl_coef * kl.abs().clamp(min=-5, max=5)
     kl_reward = -kl_coef * kl
 
     # TODO: ---- RESTORE THIS LINE ----
-    # r = r.clamp(min=-0.7 * clip_reward_range, max=clip_reward_range)
+    # r = r.clamp(min=-clip_reward_range, max=clip_reward_range)
 
     # The following code is equivalent to:
-    #
     # last_reward = torch.zeros_like(kl)
     # for i in range(last_reward.size(0)):
     #     for t in reversed(range(last_reward.size(1))):

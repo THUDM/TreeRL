@@ -215,6 +215,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_batch_size", type=int, default=128)
     parser.add_argument("--load_checkpoint", action="store_true", default=False)
     parser.add_argument("--top_p", type=float, default=1.0)
+    parser.add_argument("--min_p", type=float, default=0.05)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=42)
 
@@ -294,6 +295,10 @@ if __name__ == "__main__":
     parser.add_argument("--normalize_reward_mean_only", action="store_true", default=False)
     parser.add_argument("--mask_repeated_samples", action="store_true", default=False)
     parser.add_argument("--use_rule_based_reward", action="store_true", default=False)
-    
+    parser.add_argument("--mask_pass_confident_samples", action="store_true", default=False)
+    parser.add_argument("--use_random_top_k_logits_sampling", action="store_true", default=False)
+    parser.add_argument("--use_general_reward_for_stem", action="store_true", default=False)
+    parser.add_argument("--random_temperature", action="store_true", default=False)
+
     args = parser.parse_args()
     train(args)

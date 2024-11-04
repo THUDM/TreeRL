@@ -205,12 +205,12 @@ class ActorModelRayActor(BasePPORole):
         min_actor_learning_rate_lr = getattr(args, "min_actor_learning_rate_lr", 0.1)
         
         if args.lr_scheduler_type == "cosine":
-            actor_scheduler = get_cosine_schedule_with_warmup(actor_optim, num_warmup_steps=math.ceil(max_steps * 0.03), num_training_steps=max_steps, min_lr=min_actor_learning_rate_lr)
+            actor_scheduler = get_cosine_schedule_with_warmup(actor_optim, num_warmup_steps=math.ceil(max_steps * 0.05), num_training_steps=max_steps, min_lr=min_actor_learning_rate_lr)
         else:
             actor_scheduler = get_scheduler(
                 args.lr_scheduler_type,
                 actor_optim,
-                num_warmup_steps=math.ceil(max_steps * 0.03),
+                num_warmup_steps=math.ceil(max_steps * 0.05),
                 num_training_steps=max_steps,
             )
 
