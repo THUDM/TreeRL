@@ -2,7 +2,7 @@
 # bash build_openrlhf.sh
 
 
-cd /workspace/zhenyu/code/OpenRLHF
+cd /workspace/lurui/openrlhf-glm
 
 hostip=$(env | grep MLP_HOST=)
 hostip=${hostip#*=}
@@ -15,7 +15,10 @@ pkill -9 gcs_server
 
 # export LD_LIBRARY_PATH=/workspace/zhenyu/code/nccl/build/lib:$LD_LIBRARY_PATH
 
-
+# pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+# pip config set global.no-cache-dir true
+# pip config set global.extra-index-url https://pypi.tuna.tsinghua.edu.cn
+# pip config set global.trust-host pypi.tuna.tsinghua.edu.cn
 pip install -e .
 # pip install transformers==4.38.2
 

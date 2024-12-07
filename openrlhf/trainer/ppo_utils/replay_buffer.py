@@ -39,6 +39,7 @@ class BufferItem:
 
 def split_experience_batch(experience: Experience) -> List[BufferItem]:
     batch_size = experience.sequences.size(0)
+    print("experience shape",experience.sequences.shape)
     batch_kwargs = [{} for _ in range(batch_size)]
     keys = (
         "sequences",
@@ -54,7 +55,7 @@ def split_experience_batch(experience: Experience) -> List[BufferItem]:
         if value is None:
             continue
         vals = torch.unbind(value)
-        assert batch_size == len(vals), f"{key}: {len(vals)} != {batch_size}"
+        assert batch_size == len(vals), f"{key}: {len(vals)} != {batch_size},{key},value"
         for i, v in enumerate(vals):
             batch_kwargs[i][key] = v
 
@@ -62,9 +63,21 @@ def split_experience_batch(experience: Experience) -> List[BufferItem]:
         batch_kwargs[i]["info"] = {}
     for k, v in experience.info.items():
         vals = torch.unbind(v)
-        assert batch_size == len(vals)
+        if v is None:
+            continue
+        assert batch_size == len(vals), f"{key}: {len(vals)} != {batch_size},{k},{v}"
         for i, vv in enumerate(vals):
-            batch_kwargs[i]["info"][k] = vv.item()
+            if k=="pass_rate" or k=="pass_at_1":
+                ## use_mcts
+                # if len(vv)>1:
+                if vv.dim() != 0:
+                    batch_kwargs[i]["info"][k] = vv[0].item()
+                else:
+                    batch_kwargs[i]["info"][k] = vv.item()
+                # batch_kwargs[i]["info"][k] = vv[0].item()
+                # # batch_kwargs[i]["info"][k] = vv.item()
+            else:
+                batch_kwargs[i]["info"][k] = vv.item()
 
     items = [BufferItem(**kwargs) for kwargs in batch_kwargs]
     return items

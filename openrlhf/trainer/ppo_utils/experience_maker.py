@@ -23,7 +23,8 @@ from openrlhf.utils.remote_reward import (
     find_repeated_patterns,
     get_rule_base_rewards,
     detect_repeated_patterns,
-    get_remote_reward_entry
+    get_remote_reward_entry,
+    get_remote_reward_entry_mcts
 )
 from openrlhf.utils.logging import init_logger
 from openrlhf.datasets.reward_dataset import (
@@ -32,6 +33,10 @@ from openrlhf.datasets.reward_dataset import (
     get_process_flag_tokens, 
     get_process_flag
 )
+import os
+import time
+
+from openrlhf.trainer.ppo_utils.parallel_mcts import parallel_mcts
 
 logger = init_logger(__name__)
 
@@ -119,6 +124,7 @@ def normalize_reward_from_multi_traces_rloo(
         batch_first=False,
         mask=None
     ):
+    print("reward in normalize",reward)
     reward_raw = reward.clone()
 
     if not batch_first:
@@ -151,8 +157,9 @@ def normalize_reward_from_multi_traces_rloo(
         reward = reward.view(-1)
     else:
         # added
-        mask = mask.view(batch_size, num_trace_per_sample) if mask is not None else torch.ones_like(mask)
-        mask_num = mask.sum(dim=1).view(-1, 1) - 1
+        # mask = mask.view(batch_size, num_trace_per_sample) if mask is not None else torch.ones_like(mask)
+        mask = torch.ones_like(reward)
+        mask_num = mask.sum().view(-1, 1) - 1
 
         reward = reward.view(batch_size, num_trace_per_sample)
         reward = reward * mask
@@ -183,7 +190,199 @@ def normalize_reward_from_multi_traces_rloo(
     # reward = reward.view(-1)
 
     return reward
+
+# normalize reward
+# def normalize_reward_from_multi_traces_rloo_mcts_mask(
+#         reward, 
+#         raw_remote_rewards_attention_mask,
+#         min_threshold=0,
+#         batch_first=False,
+#         mask=None
+#     ):
+#     print("reward in normalize",reward,reward[0])
+#     reward_raw = reward.clone()
+#     assert raw_remote_rewards_attention_mask.shape == reward.shape , f"raw_remote_rewards_attention_mask.shape: {raw_remote_rewards_attention_mask.shape} != reward.shape: {reward.shape}"
+
+#     if not batch_first:
+#         if reward.numel() != batch_size * num_trace_per_sample:
+#             print(f"******* Problem: {reward.shape} != {batch_size} * {num_trace_per_sample}") 
+#             reward = reward.view(num_trace_per_sample, -1)
+#             mask = torch.ones_like(reward) if mask is None else mask.view(num_trace_per_sample, -1)
+#         else:
+#             reward = reward.view(num_trace_per_sample, batch_size)
+#             mask = torch.ones_like(reward) if mask is None else mask.view(num_trace_per_sample, batch_size)
+ 
+#         # mean = reward.mean(dim=0).view(1, -1)
+#         # mean = (_sum - reward) / (reward.size(0) - 1) 
+
+#         reward = reward * mask
+#         _sum = reward.sum(dim=0).view(1, -1)
+#         mask_num = mask.sum(dim=0).view(1, -1) - 1
+#         mean = (_sum - reward) / (mask_num + 1e-6)
+#         # std = reward.std(dim=0).view(1, -1)
+#         reward = reward - mean
+#         # reward = reward / (std + 1e-6)
+
+#         if min_threshold > 0:
+#             reward_raw = reward_raw.view(num_trace_per_sample, batch_size)
+#             reward_raw -= mean
+#             reward_mask = (reward_raw.abs() > min_threshold) | (reward_raw > 0)
+#             reward_mask = reward_mask.float()
+#             reward = reward * reward_mask
+        
+#         reward = reward.view(-1)
+#     else:
+#         # batch_size = 1
+#         # num_trace_per_sample = len(reward)
+#         # all_rewards = []
+#         # flat_rewards = reward.view(-1)
+
+#         # mask = torch.ones_like(flat_rewards)
+#         # mask_num = mask.sum() - 1
+#         # # 转换为 Tensor 进行批量操作
+#         # reward_tensor = torch.tensor(flat_rewards) * mask
+#         # _sum = reward_tensor.sum()
+#         # mean = (_sum - reward_tensor) / (mask_num + 1e-6)
+#         # # std = reward_tensor.std()
+#         # reward_tensor = reward_tensor - mean
+#         # # reward_tensor = reward_tensor / (std + 1e-6)
+#         # lower_bound = -reward_tensor.max()
+#         # reward_tensor = torch.max(reward_tensor, lower_bound)
+
+#         # if min_threshold > 0:
+#         #     reward_raw_flat = flat_rewards
+#         #     reward_raw_tensor = torch.tensor(reward_raw_flat) - mean
+#         #     # reward_raw_tensor = reward_raw_tensor / (std + 1e-6)
+#         #     reward_mask = (reward_raw_tensor.abs() > min_threshold) | (reward_raw_tensor > 0)
+#         #     reward_mask = reward_mask.float()
+#         #     reward_tensor = reward_tensor * reward_mask
+
+#         # # 将处理后的结果分拆回原来的结构, 原本的形状是 (num_trace_per_sample,_),第二个维度未知
+#         # reward = reward_tensor.view(num_trace_per_sample, -1)
+#         # return reward
     
+#         # batch_size = 1
+#         # num_trace_per_sample = len(reward)
+#         # all_rewards = []
+
+#         # rewards_sum = reward.sum(dim=1)
+#         # count_sum = raw_remote_rewards_attention_mask.sum(dim=1)
+
+#         # for i in range(num_trace_per_sample):
+#         #     # 计算除去当前样本的均值
+#         #     _sum = rewards_sum.sum() - rewards_sum[i]
+#         #     _count = count_sum.sum() - count_sum[i]
+#         #     mean = (_sum - rewards_sum[i]) / (_count + 1e-6)
+#         #     # std = reward_tensor.std()
+#         #     reward_tensor = (reward[i] - mean)*raw_remote_rewards_attention_mask[i]
+#         #     # reward_tensor = reward_tensor / (std + 1e-6)
+#         #     lower_bound = -reward_tensor.max()
+#         #     reward_tensor = torch.max(reward_tensor, lower_bound)
+
+#         #     if min_threshold > 0:
+#         #         reward_raw_tensor = (reward[i] - mean)*raw_remote_rewards_attention_mask[i]
+#         #         # reward_raw_tensor = reward_raw_tensor / (std + 1e-6)
+#         #         reward_mask = (reward_raw_tensor.abs() > min_threshold) | (reward_raw_tensor > 0)
+#         #         reward_mask = reward_mask.float()
+#         #         reward_tensor = reward_tensor * reward_mask
+#         #     all_rewards.append(reward_tensor.tolist())
+
+#         # reward = torch.tensor(all_rewards)
+#         # print("reward after normalize",reward,reward[0])
+#         # return reward
+
+#         batch_size = 1
+#         num_trace_per_sample = len(reward)
+#         all_rewards = []
+#         flat_rewards = reward.view(-1)
+#         mask = raw_remote_rewards_attention_mask.view(-1)
+
+#         mean = masked_mean(flat_rewards, mask)
+#         reward_tensor = (flat_rewards - mean)*mask
+
+#         lower_bound = -reward_tensor.max()
+#         reward_tensor = torch.max(reward_tensor, lower_bound)
+
+#         if min_threshold > 0:
+#             reward_raw_flat = flat_rewards
+#             reward_raw_tensor = (torch.tensor(reward_raw_flat) - mean)*mask
+#             # reward_raw_tensor = reward_raw_tensor / (std + 1e-6)
+#             reward_mask = (reward_raw_tensor.abs() > min_threshold) | (reward_raw_tensor > 0)
+#             reward_mask = reward_mask.float()
+#             reward_tensor = reward_tensor * reward_mask
+
+#         # 将处理后的结果分拆回原来的结构, 原本的形状是 (num_trace_per_sample,_),第二个维度未知
+#         reward = reward_tensor.view(num_trace_per_sample, -1)
+#         print("reward after normalize",reward,reward[0])
+#         return reward
+
+def normalize_reward_from_multi_traces_rloo_mcts(
+        reward, 
+        min_threshold=0,
+        batch_first=False,
+        mask=None
+    ):
+    print("reward in normalize",reward)
+    reward_raw = reward.clone()
+
+    if not batch_first:
+        if reward.numel() != batch_size * num_trace_per_sample:
+            print(f"******* Problem: {reward.shape} != {batch_size} * {num_trace_per_sample}") 
+            reward = reward.view(num_trace_per_sample, -1)
+            mask = torch.ones_like(reward) if mask is None else mask.view(num_trace_per_sample, -1)
+        else:
+            reward = reward.view(num_trace_per_sample, batch_size)
+            mask = torch.ones_like(reward) if mask is None else mask.view(num_trace_per_sample, batch_size)
+ 
+        # mean = reward.mean(dim=0).view(1, -1)
+        # mean = (_sum - reward) / (reward.size(0) - 1) 
+
+        reward = reward * mask
+        _sum = reward.sum(dim=0).view(1, -1)
+        mask_num = mask.sum(dim=0).view(1, -1) - 1
+        mean = (_sum - reward) / (mask_num + 1e-6)
+        # std = reward.std(dim=0).view(1, -1)
+        reward = reward - mean
+        # reward = reward / (std + 1e-6)
+
+        if min_threshold > 0:
+            reward_raw = reward_raw.view(num_trace_per_sample, batch_size)
+            reward_raw -= mean
+            reward_mask = (reward_raw.abs() > min_threshold) | (reward_raw > 0)
+            reward_mask = reward_mask.float()
+            reward = reward * reward_mask
+        
+        reward = reward.view(-1)
+    else:
+        batch_size = 1
+        num_trace_per_sample = len(reward)
+        all_rewards = []
+        flat_rewards = reward.view(-1)
+
+        mask = torch.ones_like(flat_rewards)
+        mask_num = mask.sum() - 1
+        # 转换为 Tensor 进行批量操作
+        reward_tensor = torch.tensor(flat_rewards) * mask
+        _sum = reward_tensor.sum()
+        mean = (_sum - reward_tensor) / (mask_num + 1e-6)
+        # std = reward_tensor.std()
+        reward_tensor = reward_tensor - mean
+        # reward_tensor = reward_tensor / (std + 1e-6)
+        lower_bound = -reward_tensor.max()
+        reward_tensor = torch.max(reward_tensor, lower_bound)
+
+        if min_threshold > 0:
+            reward_raw_flat = flat_rewards
+            reward_raw_tensor = torch.tensor(reward_raw_flat) - mean
+            reward_raw_tensor = reward_raw_tensor / (std + 1e-6)
+            reward_mask = (reward_raw_tensor.abs() > min_threshold) | (reward_raw_tensor > 0)
+            reward_mask = reward_mask.float()
+            reward_tensor = reward_tensor * reward_mask
+
+        # 将处理后的结果分拆回原来的结构, 原本的形状是 (num_trace_per_sample,_),第二个维度未知
+        reward = reward_tensor.view(num_trace_per_sample, -1)
+        print("reward after normalize",reward)
+        return reward
 
 def zero_pad_batch(sequences: List[torch.Tensor], side: str = "right", pad_token_id: int = 0) -> torch.Tensor:
     assert side in ("left", "right")
@@ -674,7 +873,7 @@ class NaiveExperienceMaker(ABC):
         extracted_answers, raw_rewards = _remote_reasoning_evaluation(_remote_rm_urls, queries, labels)
         if self.strategy.get_rank() <= 64:
             # print the first sample and result
-            print(f"---------- ## queries={queries[0]}, ## extracted_answer: {extracted_answers[0]}, ## labels: {labels[0]}, ## raw_rewards: {raw_rewards[0]}")
+            print(f"---------- ## ## extracted_answer: {extracted_answers[0]}, ## labels: {labels[0]}, ## raw_rewards: {raw_rewards[0]}")
 
         raw_rewards = raw_rewards.to(torch.cuda.current_device())
         r = [raw_rewards]
@@ -771,6 +970,7 @@ class NaiveExperienceMaker(ABC):
         action_mask: torch.Tensor,
         gamma: float,
         lambd: float,
+        sequences:Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Function that computes advantages and returns from rewards and values.
         Calculated as in the original PPO paper: https://arxiv.org/abs/1707.06347
@@ -807,6 +1007,16 @@ class NaiveExperienceMaker(ABC):
             advantages_reversed.append(lastgaelam)
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
         returns = advantages + values
+        if sequences is not None:
+            with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
+                match_list = []
+                num_actions = action_mask.size(1)
+                for i in range(advantages[0].shape[0]):
+                    str_seq = self.tokenizer.decode([sequences[0][-num_actions+i].to("cpu").tolist()], skip_special_tokens=True)
+                    match_list.append({"advantage":advantages[0][i].item(),"reward":rewards[0][i].item(),"values":values[0][i].item(),"content":str_seq})
+                f.write(json.dumps(match_list) + "\n")
+        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
+        #     f.write(json.dumps({"advantage":advantages.tolist(),"reward":rewards.tolist(),"values":values.tolist()}) + "\n")
         return advantages.detach(), returns
 
 
@@ -1436,6 +1646,10 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
     def sample_responses(self, prompts: List[str], num_trace_per_sample: int = 1, **generate_kwargs):
         if self.strategy.args.process_supervision:
             return self.sample_responses_prm(prompts, num_trace_per_sample, **generate_kwargs)
+        
+        # print("prompts: ", prompts)
+        # with open("/workspace/lurui/test/prompts.json", "a") as f:
+        #     f.write(json.dumps(prompts) + "\n")
             
         device = torch.cuda.current_device()
 
@@ -1769,7 +1983,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             r_remote = raw_remote_rewards
             if self.strategy.get_rank() <= 3:
                 # print the first sample and result
-                print(f"---------- queries: {queries[0]}, extracted_answer: {extracted_answer[0]}, labels: {labels[0]}, raw_rewards: {raw_remote_rewards[0]}")
+                print(f"---------- queries: {queries[0]}, extracted_answer: {extracted_answer}, labels: {labels}, raw_rewards: {raw_remote_rewards},overlong_mask: {overlong_mask}")
             # r = [raw_rewards]
             if self.strategy.args.mask_repeated_samples:
                 repeated_mask = overlong_mask
@@ -1790,6 +2004,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
 
         if self.strategy.args.mask_repeated_samples:
             r = r * repeated_mask
+            # r[repeated_mask == 0] = -1
         
         if self.critic:
             value = zero_pad_batch(_value, side="right")
@@ -1850,6 +2065,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     r = r * pass_rate_mask
         else:
             pass_rate = torch.zeros(action_log_probs.shape[0], device=device)
+        # print("value:",value.shape,value)
 
         return {
             "action_mask": action_mask,
@@ -1864,7 +2080,719 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             "actor_time": _actor_time,
             "wait_time": _wait_time,
             "rollout_time": rollout_time,
-            "pass_rate": pass_rate
+            "pass_rate": pass_rate,
+            "overlong_mask": overlong_mask
+        }
+    
+    def sample_responses_bymcts(self, prompts: List[str], num_trace_per_sample: int = 1,file_name = "test.jsonl", **generate_kwargs):
+        # if self.strategy.args.process_supervision:
+        #     return self.sample_responses_prm(prompts, num_trace_per_sample, **generate_kwargs)
+        # print("prompts: ", prompts)
+            
+        device = torch.cuda.current_device()
+
+        _wait_time = 0
+        _generate_time = 0
+        _actor_time = 0
+        _sequences = []
+        _action_log_probs = []
+        _value = []
+        _attention_mask = []
+        _action_mask = []
+        _raw_r = []
+        _raw_r_remote = []
+        _base_action_log_probs = []
+        _actions = []
+        _inputs = []
+        _attention_masks_actions = []
+        _attention_masks_inputs = []
+        
+        old_style = isinstance(prompts, list) and len(prompts) == 2 and not isinstance(prompts[0], str)
+
+        if old_style: 
+            # [[prompt], [history]]
+            assert False
+            micro_batch_size_roll_out = batch_size = len(prompts[0])
+        else:
+            micro_batch_size_roll_out = batch_size = len(prompts)
+
+        prompts = [json.loads(x) for x in prompts]
+        forward_batch_size = getattr(self.strategy.args, "inference_batch_size", 1)
+        generate_batch_size = getattr(self.strategy.args, "generation_batch_size", 1)
+        # print("forward_batch_size",forward_batch_size,"generate_batch_size",generate_batch_size)
+        
+        start_overall = time.time()
+
+        batch_first = True
+        _questions = [x[-1]["prompt"] for x in prompts]
+        _history = [x[:-1] for x in prompts]
+        _labels = [x[-1][self.strategy.args.label_key] for x in prompts] if self.strategy.args.label_key in prompts[0][-1] else None
+        _sources = [x[-1][self.strategy.args.source_key] for x in prompts] if self.strategy.args.source_key in prompts[0][-1] else None
+        
+        prompts = [_questions, _history, _labels, _sources]
+        
+        
+        _overlong_masks = []
+        # for i in range(0, micro_batch_size_roll_out, generate_batch_size):
+        for i in range(0, micro_batch_size_roll_out):
+            batch_prompts = [
+                prompts[0][i],  # question
+                prompts[1][i],  # history
+                prompts[2][i] if prompts[2] is not None else None, # labels
+                prompts[3][i] if prompts[3] is not None else None # sources
+            ]
+            start = time.time()
+            
+            sequences, rewards, attention_mask, action_mask, overlong_mask ,pass_ratio , pass_at_1 = (
+                self._generate_vllm_mcts(batch_prompts, num_trace_per_sample, **generate_kwargs)
+            )
+            _overlong_masks.append(overlong_mask)
+            # batch_labels = prompts[2][i: i + generate_batch_size] if prompts[2] is not None else None
+            # batch_sources = _sources[i: i + generate_batch_size] if _sources is not None else None
+            # batch_label是len(sequences)个prompts[2]的拼接
+            batch_labels = [prompts[2] for i in range(0,len(sequences))] if prompts[2] is not None else None
+            batch_sources = [prompts[3] for i in range(0,len(sequences))] if prompts[3] is not None else None
+            # ------ efficient implementation -----
+
+            _generate_time += time.time() - start
+
+            num_actions = action_mask.size(1)
+            sequences_cpu, rewards_cpu, attention_mask_cpu, action_mask_cpu = (
+                sequences.to("cpu"),
+                rewards.to("cpu"),
+                attention_mask.to("cpu"),
+                action_mask.to("cpu"),
+            )
+
+            batch_size_multiplier = len(sequences) // forward_batch_size
+            print("batch_size_multiplier",batch_size_multiplier)
+
+            for micro_i in range(batch_size_multiplier):
+                micro_sequences = sequences[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_attention_mask = attention_mask[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_action_mask = action_mask[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_node_rewards = rewards[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                
+                micro_sequences_cpu = sequences_cpu[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_attention_mask_cpu = attention_mask_cpu[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_action_mask_cpu = action_mask_cpu[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_rewards_cpu = rewards_cpu[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                # micro_num_actions = micro_action_mask_cpu.size(1)
+                if batch_labels is not None:
+                    micro_labels = batch_labels[micro_i * forward_batch_size: (micro_i+1) * forward_batch_size]
+                else:
+                    micro_labels = None
+                base_action_log_probs_ref = self.initial_model.forward.remote(micro_sequences_cpu, num_actions, micro_attention_mask_cpu)
+
+                # values
+                if self.critic:
+                    value_ref = self.critic.forward.remote(micro_sequences_cpu, micro_action_mask_cpu, micro_action_mask)
+                else:
+                    value_ref = None
+                
+                # rewards
+                r_refs = []
+                r_refs_remote = []
+                if self.remote_reward_url and micro_labels:
+                    queries = self.tokenizer.batch_decode(micro_sequences.cpu(), skip_special_tokens=False)
+                    
+                    for i, item in enumerate(queries):
+                        if "glm" in self.current_model:
+                            question, answer = extract_qa_for_glm(item)
+                            queries[i] = (question, answer)
+                            new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
+                            os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            with open(file_name, "a") as f:
+                                f.write(json.dumps(new_data) + "\n")
+                            # print(question,answer)
+                        else:
+                            raise NotImplementedError
+                    assert len(queries) == len(micro_labels), f"query={len(queries)}, labels={len(labels)}"
+                    # r_refs.append((queries, micro_labels))
+                    r_refs_remote.append((queries, micro_labels, micro_node_rewards, micro_action_mask))
+
+
+                if self.reward_model:
+                    for rm in self.reward_model:
+
+                        micro_sequences_cpu_rm, micro_attention_mask_cpu_rm = micro_sequences_cpu, micro_attention_mask_cpu
+
+                        r_refs.append(rm.forward.remote(micro_sequences_cpu_rm, micro_attention_mask_cpu_rm, False))
+
+                # log probs
+                start = time.time()
+                action_log_probs = self.actor(micro_sequences, num_actions, micro_attention_mask)
+                actor_time = time.time() - start
+
+                # wait initial/critic/reward model done
+                start = time.time()
+                
+                # if self.remote_reward_url and micro_labels:
+                if self.critic:
+                    # raise NotImplementedError
+                    if len(r_refs) > 0:
+                        ref_values = ray.get([base_action_log_probs_ref, value_ref] + r_refs)
+                        r_models = [x.to(device) for x in ref_values[2:]]
+                        r_models = self.reward_fn(r_models) if len(r_models) > 0 else r_models[0]
+                    else:                        
+                        ref_values = ray.get([base_action_log_probs_ref, value_ref])
+                        r_models = None
+                    base_action_log_probs, value = ref_values[0], ref_values[1]
+                    base_action_log_probs, value = base_action_log_probs.to(device), value.to(device)
+                    # r = r_refs
+                else:
+                    if len(r_refs) > 0:
+                        ref_values = ray.get([base_action_log_probs_ref])
+                        r_models = [x.to(device) for x in ref_values[1:]]
+                        r_models = self.reward_fn(r_models) if len(r_models) > 0 else r_models[0]
+                    else:
+                        ref_values = ray.get([base_action_log_probs_ref] + r_refs)
+                        r_models = None
+                    base_action_log_probs = ref_values[0]
+                    base_action_log_probs = base_action_log_probs.to(device)
+                    value = None
+                    # r = r_refs
+                        
+                # if self.reward_model:
+                #     if self.critic:
+                #         ref_values = ray.get([base_action_log_probs_ref, value_ref] + r_refs)
+                #         base_action_log_probs, value, rewards = ref_values[0], ref_values[1], ref_values[2:]
+                #         base_action_log_probs, value = base_action_log_probs.to(device), value.to(device)
+                #     else:
+                #         ref_values = ray.get([base_action_log_probs_ref] + r_refs)
+                #         base_action_log_probs, rewards = ref_values[0], ref_values[1:]
+                #         base_action_log_probs = base_action_log_probs.to(device)
+                #         value = None
+                #         rewards = [r.to(device) for r in rewards]
+                #         r = self.reward_fn(rewards) if len(rewards) > 0 else rewards[0]
+                    
+                wait_time = time.time() - start
+
+
+                _base_action_log_probs.append(base_action_log_probs)
+
+                _attention_mask.append(micro_attention_mask)
+                _action_mask.append(micro_action_mask)
+                _value.append(value)
+                _sequences.append(micro_sequences)
+                _action_log_probs.append(action_log_probs)
+                _actions.append(micro_sequences[:, -num_actions:])
+                _inputs.append(micro_sequences[:, :-num_actions])
+                _attention_masks_actions.append(micro_attention_mask[:, -num_actions:])
+                _attention_masks_inputs.append(micro_attention_mask[:, :-num_actions])
+                # _kl.append(kl)
+                if r_models is not None:
+                    _raw_r.append(r_models)
+                if len(r_refs_remote) > 0:
+                    _raw_r_remote.append(r_refs_remote)
+                # _reward.append(reward)
+
+                _wait_time += wait_time
+                _actor_time += actor_time
+                
+        overlong_mask = torch.cat(_overlong_masks)
+        action_mask = zero_pad_batch(_action_mask, side="right")
+        # advantage = zero_pad_batch(_advantage, side="right")
+        # returns = zero_pad_batch(_returns, side="right")
+        # kl = zero_pad_batch(_kl, side="right")
+
+        rollout_time = time.time() - start_overall
+        actions = zero_pad_batch(_actions, side="right", pad_token_id=self.tokenizer.pad_token_id)
+        inputs = zero_pad_batch(_inputs, side="left", pad_token_id=self.tokenizer.pad_token_id)
+        attention_mask_action = zero_pad_batch(_attention_masks_actions, side="right")
+        attention_mask_input = zero_pad_batch(_attention_masks_inputs, side="left")
+
+        sequences = torch.cat([inputs, actions], dim=1)
+        attention_mask = torch.cat([attention_mask_input, attention_mask_action], dim=1)
+
+        action_log_probs = zero_pad_batch(_action_log_probs, side="right")
+        base_action_log_probs = zero_pad_batch(_base_action_log_probs, side="right")
+
+        if self.remote_reward_url:
+            if _sources is None:
+                _sources = ["math"] * len(queries)
+            else:
+                _sources = [_sources[0] for i in range(0,len(sequences))]
+                
+            
+            _raw_r_remote = [item for sublist in _raw_r_remote for item in sublist]
+            queries = [item for sublist in _raw_r_remote for item in sublist[0]]
+            labels = [item for sublist in _raw_r_remote for item in sublist[1]]
+            res = [item for sublist in _raw_r_remote for item in sublist[2]]
+            reward_attention_mask = [item for sublist in _raw_r_remote for item in sublist[3]]
+            queries = [(x[0], x[1], y, z,w) for x, y, z,w in zip(queries, labels, res, reward_attention_mask)]
+            
+            input_queries = [{
+                "prompt": x[0],
+                "response": x[1],
+                "label": x[2],
+                "reward": x[3],
+                "attention_mask": x[4],
+                "data_type": y
+            } for x, y in zip(queries, _sources)]
+            
+            assert ".json" in self.remote_reward_url[0], f"remote_reward_url: {self.remote_reward_url}"
+
+            with open(self.remote_reward_url[0], "r") as f:
+                _remote_rm_urls = json.load(f)
+            (
+                raw_remote_rewards
+            ) = get_remote_reward_entry_mcts(
+                input_queries,
+                overlong_mask,
+                use_rule_based_reward=self.strategy.args.use_rule_based_reward,
+            )
+            # raw_remote_rewards = torch.tensor(raw_remote_rewards).to(torch.cuda.current_device())
+            raw_remote_rewards = raw_remote_rewards.to(torch.cuda.current_device())
+
+            
+            print(f"--------******* num_queries: {len(queries)}, num_labels: {len(labels)}, length_ratio: {overlong_mask.sum() / overlong_mask.numel()}")
+
+            r_remote = raw_remote_rewards
+            if self.strategy.get_rank() <= 3:
+                # print the first sample and result
+                print(f"---------- queries: {queries[0]} labels: {labels[0]} raw_rewards: {raw_remote_rewards[0]}")
+            # r = [raw_rewards]
+            if self.strategy.args.mask_repeated_samples:
+                repeated_mask = overlong_mask
+            else:
+                repeated_mask = 1
+        else:
+            r_remote = 0
+            repeated_mask = 1
+
+        if self.reward_model:
+            r_model = torch.cat(_raw_r, dim=0)
+        else:
+            r_model = 0
+
+        r = r_remote + r_model
+        _raw_reward = r.clone()
+
+        # if self.strategy.args.mask_repeated_samples:
+            # r = r * repeated_mask
+        
+        if self.critic:
+            value = zero_pad_batch(_value, side="right")
+        else:
+            value = None
+
+        assert not (self.strategy.args.normalize_reward_from_multi_traces_with_rloo and self.strategy.args.normalize_reward_from_multi_traces), f"normalize_reward_from_multi_traces_with_rloo and normalize_reward_from_multi_traces cannot be set to True at the same time"
+        print("num_trace_per_sample",num_trace_per_sample,)
+            
+        # if num_trace_per_sample > 1: # and not self.remote_reward_url:
+        #     div_std = not getattr(self.strategy.args, "normalize_reward_mean_only", False)
+
+        #     if self.strategy.args.normalize_reward_from_multi_traces:
+        #         r = normalize_reward_from_multi_traces(
+        #             r, 
+        #             batch_size, 
+        #             num_trace_per_sample,
+        #             min_threshold=getattr(self.strategy.args, "min_reward_gap", 0.0),
+        #             batch_first=batch_first,
+        #             div_std=div_std,
+        #             mask=repeated_mask
+        #         )
+        #     if self.strategy.args.normalize_reward_from_multi_traces_with_rloo:
+        #         pass
+        #         # r = normalize_reward_from_multi_traces_rloo_mcts_mask(
+        #         #     r, 
+        #         #     raw_remote_rewards_attention_mask,
+        #         #     min_threshold=getattr(self.strategy.args, "min_reward_gap", 0.0),
+        #         #     batch_first=batch_first,
+        #         #     mask=repeated_mask
+        #         #     # div_std=div_std   
+        #         # )   
+                
+        if self.strategy.args.mask_repeated_samples:
+            # r = r * repeated_mask
+            print("repeated_mask",repeated_mask.shape,"r",r.shape)
+            r[repeated_mask == 0] = -1
+
+
+        if self.remote_reward_url:
+            # 创建一个和r一样形状的pass_rate,每个数据都是pass_rate
+            pass_rate = torch.full_like(r, pass_ratio).to(action_log_probs.device)
+            pass_at_1_rate = torch.full_like(r, pass_at_1).to(action_log_probs.device)
+            if pass_ratio > 0.8:
+                pass_rate_mask = torch.full_like(r, 0).to(action_log_probs.device)
+            else:
+                pass_rate_mask = torch.full_like(r, 1).to(action_log_probs.device)
+
+            if self.strategy.args.mask_pass_confident_samples:
+                assert pass_rate_mask.shape == r.shape, f"pass_rate_shape: {pass_rate_mask.shape}, r_shape: {r.shape}"
+                r = r * pass_rate_mask
+        else:
+            pass_rate = torch.zeros(action_log_probs.shape[0], device=device)
+
+        return {
+            "action_mask": action_mask,
+            "attention_mask": attention_mask,
+            "sequences": sequences,
+            "action_log_probs": action_log_probs,
+            "base_action_log_probs": base_action_log_probs,
+            "value": value,
+            "reward": r,
+            "raw_reward": _raw_reward,
+            "generate_time": _generate_time,
+            "actor_time": _actor_time,
+            "wait_time": _wait_time,
+            "rollout_time": rollout_time,
+            "pass_rate": pass_rate,
+            "overlong_mask": overlong_mask,
+            "pass_at_1": pass_at_1_rate,
+        }
+    
+    def sample_responses_bymcts_use_vinevalue(self, prompts: List[str], num_trace_per_sample: int = 1,file_name = "test.jsonl",use_sentence_level_value:bool = False, **generate_kwargs):
+        if self.strategy.args.process_supervision:
+            return self.sample_responses_prm(prompts, num_trace_per_sample, **generate_kwargs)
+        # print("prompts: ", prompts)
+        print("file_name",file_name)
+            
+        device = torch.cuda.current_device()
+
+        _wait_time = 0
+        _generate_time = 0
+        _actor_time = 0
+        _sequences = []
+        _action_log_probs = []
+        _value = []
+        _attention_mask = []
+        _action_mask = []
+        _seq_path_lens = []
+        _raw_r = []
+        _raw_r_remote = []
+        _base_action_log_probs = []
+        _actions = []
+        _inputs = []
+        _attention_masks_actions = []
+        _attention_masks_inputs = []
+        
+        old_style = isinstance(prompts, list) and len(prompts) == 2 and not isinstance(prompts[0], str)
+
+        if old_style: 
+            # [[prompt], [history]]
+            assert False
+            micro_batch_size_roll_out = batch_size = len(prompts[0])
+        else:
+            micro_batch_size_roll_out = batch_size = len(prompts)
+
+        prompts = [json.loads(x) for x in prompts]
+        forward_batch_size = getattr(self.strategy.args, "inference_batch_size", 1)
+        generate_batch_size = getattr(self.strategy.args, "generation_batch_size", 1)
+        # print("forward_batch_size",forward_batch_size,"generate_batch_size",generate_batch_size)
+        
+        start_overall = time.time()
+
+        batch_first = True
+        _questions = [x[-1]["prompt"] for x in prompts]
+        _history = [x[:-1] for x in prompts]
+        _labels = [x[-1][self.strategy.args.label_key] for x in prompts] if self.strategy.args.label_key in prompts[0][-1] else None
+        _sources = [x[-1][self.strategy.args.source_key] for x in prompts] if self.strategy.args.source_key in prompts[0][-1] else None
+        
+        prompts = [_questions, _history, _labels, _sources]
+        
+        
+        _overlong_masks = []
+        # for i in range(0, micro_batch_size_roll_out, generate_batch_size):
+        for i in range(0, micro_batch_size_roll_out):
+            batch_prompts = [
+                prompts[0][i],  # question
+                prompts[1][i],  # history
+                prompts[2][i] if prompts[2] is not None else None, # labels
+                prompts[3][i] if prompts[3] is not None else None # sources
+            ]
+            start = time.time()
+            
+            if use_sentence_level_value:
+                sequences, rewards, values, attention_mask, action_mask, overlong_mask ,pass_ratio,pass_at_1,seq_path_lens = (
+                    self._generate_vllm_mcts_use_vinevalue(batch_prompts, num_trace_per_sample, **generate_kwargs)
+                )
+            else:
+                sequences, rewards, values, attention_mask, action_mask, overlong_mask ,pass_ratio,pass_at_1 = (
+                    self._generate_vllm_mcts_use_vinevalue(batch_prompts, num_trace_per_sample, **generate_kwargs)
+                )
+            _overlong_masks.append(overlong_mask)
+            # batch_labels = prompts[2][i: i + generate_batch_size] if prompts[2] is not None else None
+            # batch_sources = _sources[i: i + generate_batch_size] if _sources is not None else None
+            # batch_label是len(sequences)个prompts[2]的拼接
+            batch_labels = [prompts[2] for i in range(0,len(sequences))] if prompts[2] is not None else None
+            batch_sources = [prompts[3] for i in range(0,len(sequences))] if prompts[3] is not None else None
+            # ------ efficient implementation -----
+
+            _generate_time += time.time() - start
+
+            num_actions = action_mask.size(1)
+            sequences_cpu, rewards_cpu, value_cpu, attention_mask_cpu, action_mask_cpu = (
+                sequences.to("cpu"),
+                rewards.to("cpu"),
+                values.to("cpu"),
+                attention_mask.to("cpu"),
+                action_mask.to("cpu"),
+            )
+
+            batch_size_multiplier = len(sequences) // forward_batch_size
+            print("batch_size_multiplier",batch_size_multiplier)
+
+            for micro_i in range(batch_size_multiplier):
+                micro_sequences = sequences[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_attention_mask = attention_mask[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_action_mask = action_mask[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_node_rewards = rewards[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_node_values = values[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+
+                if use_sentence_level_value:
+                    micro_seq_path_lens = seq_path_lens[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                
+                micro_sequences_cpu = sequences_cpu[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_attention_mask_cpu = attention_mask_cpu[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_action_mask_cpu = action_mask_cpu[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_rewards_cpu = rewards_cpu[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                micro_values_cpu = value_cpu[micro_i * forward_batch_size: (micro_i + 1) * forward_batch_size]
+                # micro_num_actions = micro_action_mask_cpu.size(1)
+                if batch_labels is not None:
+                    micro_labels = batch_labels[micro_i * forward_batch_size: (micro_i+1) * forward_batch_size]
+                else:
+                    micro_labels = None
+                base_action_log_probs_ref = self.initial_model.forward.remote(micro_sequences_cpu, num_actions, micro_attention_mask_cpu)
+                
+                # rewards
+                r_refs = []
+                r_refs_remote = []
+                if self.remote_reward_url and micro_labels:
+                    queries = self.tokenizer.batch_decode(micro_sequences.cpu(), skip_special_tokens=False)
+                    
+                    for i, item in enumerate(queries):
+                        if "glm" in self.current_model:
+                            question, answer = extract_qa_for_glm(item)
+                            queries[i] = (question, answer)
+                            new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
+                            # sample_table = pd.concat([sample_table, new_data], ignore_index=True)
+                            # 创建一个以当前时间命名的文件,精确到天
+                            # file_name = "/workspace/lurui/openrlhf-glm/logs/samplings/"+time.strftime("%Y-%m-%d-%H.jsonl", time.localtime())
+                            os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            with open(file_name, "a") as f:
+                                f.write(json.dumps(new_data) + "\n")
+                            # print(question,answer)
+                        else:
+                            raise NotImplementedError
+                    assert len(queries) == len(micro_labels), f"query={len(queries)}, labels={len(labels)}"
+                    # r_refs.append((queries, micro_labels))
+                    r_refs_remote.append((queries, micro_labels, micro_node_rewards, micro_node_values))
+
+
+                if self.reward_model:
+                    for rm in self.reward_model:
+
+                        micro_sequences_cpu_rm, micro_attention_mask_cpu_rm = micro_sequences_cpu, micro_attention_mask_cpu
+
+                        r_refs.append(rm.forward.remote(micro_sequences_cpu_rm, micro_attention_mask_cpu_rm, False))
+
+                # log probs
+                start = time.time()
+                action_log_probs = self.actor(micro_sequences, num_actions, micro_attention_mask)
+                actor_time = time.time() - start
+
+                # wait initial/critic/reward model done
+                start = time.time()
+                
+                # if self.remote_reward_url and micro_labels:
+                if len(r_refs) > 0:
+                    ref_values = ray.get([base_action_log_probs_ref])
+                    r_models = [x.to(device) for x in ref_values[1:]]
+                    r_models = self.reward_fn(r_models) if len(r_models) > 0 else r_models[0]
+                else:
+                    ref_values = ray.get([base_action_log_probs_ref] + r_refs)
+                    r_models = None
+                base_action_log_probs = ref_values[0]
+                base_action_log_probs = base_action_log_probs.to(device)
+                value = None
+                    # r = r_refs
+                    
+                wait_time = time.time() - start
+
+
+                _base_action_log_probs.append(base_action_log_probs)
+
+                _attention_mask.append(micro_attention_mask)
+                _action_mask.append(micro_action_mask)
+                if use_sentence_level_value:
+                    _seq_path_lens.append(micro_seq_path_lens)
+                _value.append(value)
+                _sequences.append(micro_sequences)
+                _action_log_probs.append(action_log_probs)
+                _actions.append(micro_sequences[:, -num_actions:])
+                _inputs.append(micro_sequences[:, :-num_actions])
+                _attention_masks_actions.append(micro_attention_mask[:, -num_actions:])
+                _attention_masks_inputs.append(micro_attention_mask[:, :-num_actions])
+                # _kl.append(kl)
+                if r_models is not None:
+                    _raw_r.append(r_models)
+                if len(r_refs_remote) > 0:
+                    _raw_r_remote.append(r_refs_remote)
+                # _reward.append(reward)
+
+                _wait_time += wait_time
+                _actor_time += actor_time
+                
+        overlong_mask = torch.cat(_overlong_masks)
+        action_mask = zero_pad_batch(_action_mask, side="right")
+        if use_sentence_level_value:
+            seq_path_lens = _seq_path_lens
+        # advantage = zero_pad_batch(_advantage, side="right")
+        # returns = zero_pad_batch(_returns, side="right")
+        # kl = zero_pad_batch(_kl, side="right")
+
+        rollout_time = time.time() - start_overall
+        actions = zero_pad_batch(_actions, side="right", pad_token_id=self.tokenizer.pad_token_id)
+        inputs = zero_pad_batch(_inputs, side="left", pad_token_id=self.tokenizer.pad_token_id)
+        attention_mask_action = zero_pad_batch(_attention_masks_actions, side="right")
+        attention_mask_input = zero_pad_batch(_attention_masks_inputs, side="left")
+
+        sequences = torch.cat([inputs, actions], dim=1)
+        attention_mask = torch.cat([attention_mask_input, attention_mask_action], dim=1)
+
+        action_log_probs = zero_pad_batch(_action_log_probs, side="right")
+        base_action_log_probs = zero_pad_batch(_base_action_log_probs, side="right")
+
+        if self.remote_reward_url:
+            if _sources is None:
+                _sources = ["math"] * len(queries)
+            else:
+                _sources = [_sources[0] for i in range(0,len(sequences))]
+                
+            
+            _raw_r_remote = [item for sublist in _raw_r_remote for item in sublist]
+            queries = [item for sublist in _raw_r_remote for item in sublist[0]]
+            labels = [item for sublist in _raw_r_remote for item in sublist[1]]
+            res = [item for sublist in _raw_r_remote for item in sublist[2]]
+            vals = [item for sublist in _raw_r_remote for item in sublist[3]]
+            queries = [(x[0], x[1], y, z, w) for x, y, z,w in zip(queries, labels, res, vals)]
+            
+            input_queries = [{
+                "prompt": x[0],
+                "response": x[1],
+                "label": x[2],
+                "reward": x[3],
+                "value": x[4],
+                "data_type": y
+            } for x, y in zip(queries, _sources)]
+            
+            assert ".json" in self.remote_reward_url[0], f"remote_reward_url: {self.remote_reward_url}"
+
+            with open(self.remote_reward_url[0], "r") as f:
+                _remote_rm_urls = json.load(f)
+            (
+                raw_remote_rewards
+            ) = get_remote_reward_entry_mcts(
+                input_queries,
+                overlong_mask,
+                use_rule_based_reward=self.strategy.args.use_rule_based_reward,
+            )
+            # raw_remote_rewards = torch.tensor(raw_remote_rewards).to(torch.cuda.current_device())
+            raw_remote_rewards = raw_remote_rewards.to(torch.cuda.current_device())
+            
+            values = []
+            for query in input_queries:
+                values.append(query["value"].tolist())
+            values = torch.tensor(values).to(torch.cuda.current_device()).float()
+
+            print(f"--------******* num_queries: {len(queries)}, num_labels: {len(labels)}, length_ratio: {overlong_mask.sum() / overlong_mask.numel()}")
+
+            r_remote = raw_remote_rewards
+            if self.strategy.get_rank() <= 3:
+                # print the first sample and result
+                print(f"---------- queries: {queries[0]} labels: {labels[0]} raw_rewards: {raw_remote_rewards}, values: {values}")
+            # r = [raw_rewards]
+            if self.strategy.args.mask_repeated_samples:
+                repeated_mask = overlong_mask
+            else:
+                repeated_mask = 1
+        else:
+            r_remote = 0
+            repeated_mask = 1
+
+        if self.reward_model:
+            r_model = torch.cat(_raw_r, dim=0)
+        else:
+            r_model = 0
+
+        r = r_remote + r_model
+        _raw_reward = r
+
+        if self.strategy.args.mask_repeated_samples:
+            r = r * repeated_mask
+        
+
+        assert not (self.strategy.args.normalize_reward_from_multi_traces_with_rloo and self.strategy.args.normalize_reward_from_multi_traces), f"normalize_reward_from_multi_traces_with_rloo and normalize_reward_from_multi_traces cannot be set to True at the same time"
+        print("num_trace_per_sample",num_trace_per_sample,)
+            
+        if num_trace_per_sample > 1: # and not self.remote_reward_url:
+            div_std = not getattr(self.strategy.args, "normalize_reward_mean_only", False)
+
+            if self.strategy.args.normalize_reward_from_multi_traces:
+                r = normalize_reward_from_multi_traces(
+                    r, 
+                    batch_size, 
+                    num_trace_per_sample,
+                    min_threshold=getattr(self.strategy.args, "min_reward_gap", 0.0),
+                    batch_first=batch_first,
+                    div_std=div_std,
+                    mask=repeated_mask
+                )
+            if self.strategy.args.normalize_reward_from_multi_traces_with_rloo:
+                # pass
+                r = normalize_reward_from_multi_traces_rloo_mcts(
+                    r,
+                    min_threshold=getattr(self.strategy.args, "min_reward_gap", 0.0),
+                    batch_first=batch_first,
+                    mask=repeated_mask
+                    # div_std=div_std   
+                )   
+                
+        if self.strategy.args.mask_repeated_samples:
+            r = r * repeated_mask
+
+        if self.remote_reward_url:
+            # 创建一个和r一样形状的pass_rate,每个数据都是pass_rate
+            pass_rate = torch.full_like(r, pass_ratio).to(action_log_probs.device)
+            pass_at_1_rate = torch.full_like(r, pass_at_1).to(action_log_probs.device)
+            if pass_ratio > 0.8:
+                pass_rate_mask = torch.full_like(r, 0).to(action_log_probs.device)
+            else:
+                pass_rate_mask = torch.full_like(r, 1).to(action_log_probs.device)
+
+            if self.strategy.args.mask_pass_confident_samples:
+                assert pass_rate_mask.shape == r.shape, f"pass_rate_shape: {pass_rate_mask.shape}, r_shape: {r.shape}"
+                r = r * pass_rate_mask
+        else:
+            pass_rate = torch.zeros(action_log_probs.shape[0], device=device)
+        
+        # advantage, returns = self.get_advantages_and_returns(
+        #     values,
+        #     r,
+        #     action_mask,
+        #     generate_kwargs["gamma"],
+        #     generate_kwargs["lambd"],
+        # )
+
+        return {
+            "action_mask": action_mask,
+            "attention_mask": attention_mask,
+            "sequences": sequences,
+            "action_log_probs": action_log_probs,
+            "base_action_log_probs": base_action_log_probs,
+            "values": values,
+            "reward": r,
+            "raw_reward": _raw_reward,
+            "generate_time": _generate_time,
+            "actor_time": _actor_time,
+            "wait_time": _wait_time,
+            "rollout_time": rollout_time,
+            "pass_rate": pass_rate,
+            "pass_at_1": pass_at_1_rate,
+            "overlong_mask": overlong_mask,
+            "seq_path_lens": seq_path_lens if use_sentence_level_value else None,
         }
 
     @torch.no_grad()
@@ -2134,13 +3062,14 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             temperature=kwargs.get("temperature", 1.0),
             top_p=kwargs.get("top_p", 1.0),
             top_k=kwargs.get("top_k", -1),
-            max_tokens=kwargs.get("max_new_tokens", 16),
+            max_tokens=kwargs.get("max_new_tokens", 4096),
             # stop_token_ids=[self.tokenizer.convert_tokens_to_ids("<|user|>"), self.tokenizer.convert_tokens_to_ids("<|observation|>")],
             stop_token_ids=list(eos_token_set),
             min_tokens=kwargs.get("min_new_tokens ", 1),
-            min_p=self.strategy.args.min_p,
+            # min_p=self.strategy.args.min_p,
             # stop=["<|user|>", "<|observation|>"],
         )
+        print("max_tokens",kwargs.get("max_new_tokens", 4096))
 
         # TODO: can't pass `max_length` to vLLM's tokenizer for input truncation, remove this once it is supported.
         input_ids = self.tokenize_fn(prompts, self.prompt_max_len, device="cpu")["input_ids"]
@@ -2218,9 +3147,14 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             if int(output_ids[output_len - 1]) not in eos_token_set:
                 # assert output_len == max_output_len, f"output_len: {output_len}, max_output_len: {max_output_len}, output_ids: {output_ids[output_len-5:output_len+1]}"
                 # output_ids[-1] = eos_token_id
+                print("overlong!!",output.outputs[0].text)
+                # with open("/workspace/lurui/openrlhf-glm/logs/outputs/overlong.jsonl","a") as f:
+                #     f.write(json.dumps({"output":output.outputs[0].text,"overlong":True,"stop_token":int(output_ids[output_len - 1])}) + "\n")
                 output_ids[min(output_len, len(output_ids) - 1)] = eos_token_id
                 overlong.append(0)
             else:
+                # with open("/workspace/lurui/openrlhf-glm/logs/outputs/overlong.jsonl","a") as f:
+                #     f.write(json.dumps({"output":output.outputs[0].text,"overlong":False,"stop_token":int(output_ids[output_len - 1])}) + "\n")
                 overlong.append(1)
                 
             # concat input and output
@@ -2232,6 +3166,274 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         )
         overlong_mask = torch.tensor(overlong).to("cuda") # 1 for long, 0 for short
         return sequences.to("cuda"), attention_mask.to("cuda"), action_mask.to("cuda"), overlong_mask
+    
+    def _generate_vllm_mcts(self, prompts: List[str], num_trace_per_sample:int, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        from vllm import SamplingParams
+        coeff = 0.3
+
+        # round-robin load balance
+        rank = torch.distributed.get_rank()
+        llm = self.vllm_engines[rank % len(self.vllm_engines)]
+
+        if "glm" in self.current_model:
+            eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
+            eos_token_set = (self.tokenizer.convert_tokens_to_ids("<|user|>"), self.tokenizer.convert_tokens_to_ids("<|observation|>"), self.tokenizer.eos_token_id)
+        else:
+            # assert False, "Not supported model except for ChatGLM."
+            eos_token_id = self.tokenizer.eos_token_id
+            eos_token_set = (self.tokenizer.eos_token_id)
+
+        item = {"problem": prompts[0], "golden_answer": prompts[2]}
+        assert prompts[2] is not None, f"labels is None, prompts: {prompts}"
+
+        # args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 512, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 32, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024}
+        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360}
+
+
+        paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, args)
+        assert paths is not None, f"paths is None, prompts: {prompts}"
+        # print("paths:",paths)
+            
+        # NOTE: concat all outputs to following format:
+        #
+        # | [PAD] [PAD] token token token | token token [EOS] [PAD] |
+        # | token token token token token | token token [EOS] [PAD] |
+        # | [PAD] [PAD] [PAD] token token | token token token [EOS] |
+        # |<---------- prompt ----------->|<-------- answer ------->|
+        max_input_len = len(input_ids)
+        max_output_len = 0
+        for path in paths:
+            output_token_ids = sum([len(x["token_answer"]) for x in path])
+            max_output_len = max(max_output_len, output_token_ids)
+
+        pad_token_id = self.tokenizer.pad_token_id
+        sequences = []
+        overlong = []
+        seq_rewards = []
+        correct_terminal = 0
+        total_terminals = len(paths)
+        correct_terminal_count = 0
+        for path in paths:
+            rewards = []
+            output_token_ids = []
+            for i in range(len(path)):
+                output_token_ids += path[i]["token_answer"]
+                # rewards 加len(path[i]["token_answer"])个reward
+                reward = path[i]["value"]
+                # print("pass_ratio",path[i]["pass_ratio"])
+                rewards += [reward] * len(path[i]["token_answer"])
+            output_len = len(output_token_ids)
+            output_ids = output_token_ids + [pad_token_id] * (max_output_len - len(output_token_ids))
+            rewards += [0] * (max_output_len - len(output_token_ids))
+            if int(output_ids[output_len - 1]) not in eos_token_set:
+                output_ids[min(output_len, len(output_ids) - 1)] = eos_token_id 
+                overlong.append(0)
+            else:
+                overlong.append(1)   
+            sequences.append(input_ids + output_ids)
+            if path[-1]["pass_ratio"] == 1:
+                # correct_terminal += 1
+                correct_terminal_count += 1
+                correct_terminal = 1
+            seq_rewards.append(rewards)
+
+        sequences = torch.tensor(sequences)
+        seq_rewards = torch.tensor(seq_rewards).float()
+        sequences, attention_mask, action_mask = self.actor.process_sequences(
+            sequences, max_input_len, eos_token_id, pad_token_id
+        )
+        overlong_mask = torch.tensor(overlong).to("cuda") # 1 for long, 0 for short
+        print("seq_rewards",seq_rewards.shape)
+        return sequences.to("cuda"), seq_rewards.to("cuda"), attention_mask.to("cuda"), action_mask.to("cuda"), overlong_mask,correct_terminal,correct_terminal_count/total_terminals
+
+    def _generate_vllm_mcts_use_vinevalue(self, prompts: List[str], num_trace_per_sample:int, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        from vllm import SamplingParams
+        coeff = 0.3
+
+        # round-robin load balance
+        rank = torch.distributed.get_rank()
+        llm = self.vllm_engines[rank % len(self.vllm_engines)]
+
+        if "glm" in self.current_model:
+            eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
+            eos_token_set = (self.tokenizer.convert_tokens_to_ids("<|user|>"), self.tokenizer.convert_tokens_to_ids("<|observation|>"), self.tokenizer.eos_token_id)
+        else:
+            # assert False, "Not supported model except for ChatGLM."
+            eos_token_id = self.tokenizer.eos_token_id
+            eos_token_set = (self.tokenizer.eos_token_id)
+
+        item = {"problem": prompts[0], "golden_answer": prompts[2]}
+        assert prompts[2] is not None, f"labels is None, prompts: {prompts}"
+
+        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360}
+        
+        paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, args)
+        assert paths is not None, f"paths is None, prompts: {prompts}"
+        # print("paths:",paths)
+            
+        # NOTE: concat all outputs to following format:
+        #
+        # | [PAD] [PAD] token token token | token token [EOS] [PAD] |
+        # | token token token token token | token token [EOS] [PAD] |
+        # | [PAD] [PAD] [PAD] token token | token token token [EOS] |
+        # |<---------- prompt ----------->|<-------- answer ------->|
+        max_input_len = len(input_ids)
+        max_output_len = 0
+        for path in paths:
+            output_token_ids = sum([len(x["token_answer"]) for x in path])
+            max_output_len = max(max_output_len, output_token_ids)
+
+        pad_token_id = self.tokenizer.pad_token_id
+        sequences = []
+        overlong = []
+        seq_rewards = []
+        seq_values = []
+        correct_terminal = 0
+        correct_terminal_count = 0
+        total_terminals = len(paths)
+        for path in paths:
+            values = []
+            output_token_ids = []
+            if path[-1]["pass_ratio"] == 1:
+                seq_rewards.append(1)
+            else:
+                assert path[-1]["pass_ratio"] == 0, f"pass_ratio: {path[-1]['pass_ratio']} should be 0 or 1"
+                seq_rewards.append(0)
+            for i in range(len(path)):
+                output_token_ids += path[i]["token_answer"]
+                if i == len(path) - 1:
+                    values += [0] * len(path[i]["token_answer"])
+                else:
+                    value = path[i]["value"]
+                    values += [value] * len(path[i]["token_answer"])
+                # print("single value",values)
+            assert len(values) == len(output_token_ids), f"len(values): {len(values)}, len(output_token_ids): {len(output_token_ids)}"
+            output_len = len(output_token_ids)
+            output_ids = output_token_ids + [pad_token_id] * (max_output_len - len(output_token_ids))
+            values += [0] * (max_output_len - len(output_token_ids))
+            if int(output_ids[output_len - 1]) not in eos_token_set:
+                output_ids[min(output_len, len(output_ids) - 1)] = eos_token_id 
+                overlong.append(0)
+            else:
+                overlong.append(1)   
+            sequences.append(input_ids + output_ids)
+            if path[-1]["pass_ratio"] == 1:
+                # correct_terminal += 1
+                correct_terminal = 1
+                correct_terminal_count += 1
+            seq_values.append(values)
+
+        sequences = torch.tensor(sequences)
+        seq_rewards = torch.tensor(seq_rewards).float()
+        seq_values = torch.tensor(seq_values).float()
+        print("seq_values out",seq_values.shape)
+        sequences, attention_mask, action_mask = self.actor.process_sequences(
+            sequences, max_input_len, eos_token_id, pad_token_id
+        )
+        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/action_mask.jsonl","a") as f:
+        #     match_list = []
+        #     for i in range(sequences[0].shape[0]):
+        #         str_seq = self.tokenizer.decode([sequences[0][i].to("cpu").tolist()], skip_special_tokens=True)
+        #         match_list.append({"action_mask":action_mask[0][i].item(),"reward":seq_rewards[i].item(),"values":seq_values[0][i].item(),"content":str_seq})
+        #     f.write(json.dumps(match_list) + "\n")
+        overlong_mask = torch.tensor(overlong).to("cuda") # 1 for long, 0 for short
+        print("seq_rewards",seq_rewards.shape)
+        return sequences.to("cuda"), seq_rewards.to("cuda"), seq_values.to("cuda"),attention_mask.to("cuda"), action_mask.to("cuda"), overlong_mask,correct_terminal,correct_terminal_count/total_terminals
+
+    def _generate_vllm_mcts_use_vinevalue_sentence_level(self, prompts: List[str], num_trace_per_sample:int, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        from vllm import SamplingParams
+        coeff = 0.3
+
+        # round-robin load balance
+        rank = torch.distributed.get_rank()
+        llm = self.vllm_engines[rank % len(self.vllm_engines)]
+
+        if "glm" in self.current_model:
+            eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
+            eos_token_set = (self.tokenizer.convert_tokens_to_ids("<|user|>"), self.tokenizer.convert_tokens_to_ids("<|observation|>"), self.tokenizer.eos_token_id)
+        else:
+            # assert False, "Not supported model except for ChatGLM."
+            eos_token_id = self.tokenizer.eos_token_id
+            eos_token_set = (self.tokenizer.eos_token_id)
+
+        item = {"problem": prompts[0], "golden_answer": prompts[2]}
+        assert prompts[2] is not None, f"labels is None, prompts: {prompts}"
+
+        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360}
+        
+        paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, args)
+        assert paths is not None, f"paths is None, prompts: {prompts}"
+        # print("paths:",paths)
+            
+        # NOTE: concat all outputs to following format:
+        #
+        # | [PAD] [PAD] token token token | token token [EOS] [PAD] |
+        # | token token token token token | token token [EOS] [PAD] |
+        # | [PAD] [PAD] [PAD] token token | token token token [EOS] |
+        # |<---------- prompt ----------->|<-------- answer ------->|
+        max_input_len = len(input_ids)
+        max_output_len = 0
+        for path in paths:
+            output_token_ids = sum([len(x["token_answer"]) for x in path])
+            max_output_len = max(max_output_len, output_token_ids)
+
+        pad_token_id = self.tokenizer.pad_token_id
+        sequences = []
+        overlong = []
+        seq_rewards = []
+        seq_values = []
+        correct_terminal = 0
+        correct_terminal_count = 0
+        total_terminals = len(paths)
+        max_path_len = 0
+        seq_path_lens = []
+        for path in paths:
+            path_len = []
+            if len(path) > max_path_len:
+                max_path_len = len(path)
+            for i in range(len(path)):
+                path_len.append(len(path[i]["token_answer"]))
+            seq_path_lens.append(path_len)
+        for path in paths:
+            values = []
+            output_token_ids = []
+            if path[-1]["pass_ratio"] == 1:
+                seq_rewards.append(1)
+            else:
+                assert path[-1]["pass_ratio"] == 0, f"pass_ratio: {path[-1]['pass_ratio']} should be 0 or 1"
+                seq_rewards.append(-1)
+            for i in range(len(path)):
+                output_token_ids += path[i]["token_answer"]
+                if i == len(path) - 1:
+                    values.append(0)
+                else:
+                    values.append(path[i]["pass_ratio"])
+            assert len(values) == len(path), f"len(values): {len(values)} != len(path): {len(path)}"
+            output_len = len(output_token_ids)
+            output_ids = output_token_ids + [pad_token_id] * (max_output_len - len(output_token_ids))
+            values += [0] * (max_path_len - len(values))
+            if int(output_ids[output_len - 1]) not in eos_token_set:
+                output_ids[min(output_len, len(output_ids) - 1)] = eos_token_id 
+                overlong.append(0)
+            else:
+                overlong.append(1)   
+            sequences.append(input_ids + output_ids)
+            if path[-1]["pass_ratio"] == 1:
+                # correct_terminal += 1
+                correct_terminal = 1
+                correct_terminal_count += 1
+            seq_values.append(values)
+
+        sequences = torch.tensor(sequences)
+        seq_rewards = torch.tensor(seq_rewards).float()
+        seq_values = torch.tensor(seq_values).float()
+        print("seq_values out",seq_values.shape)
+        sequences, attention_mask, action_mask = self.actor.process_sequences(
+            sequences, max_input_len, eos_token_id, pad_token_id
+        )
+        overlong_mask = torch.tensor(overlong).to("cuda") # 1 for long, 0 for short
+        print("seq_rewards",seq_rewards.shape)
+        return sequences.to("cuda"), seq_rewards.to("cuda"), seq_values.to("cuda"),attention_mask.to("cuda"), action_mask.to("cuda"), overlong_mask,correct_terminal,correct_terminal_count/total_terminals,seq_path_lens
 
     def flush(self):
         "Ensure all experience has been send to critic"

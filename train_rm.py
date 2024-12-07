@@ -6,7 +6,7 @@ from datetime import datetime
 
 from transformers.trainer import get_scheduler
 
-from openrlhf.datasets import RewardDataset, RewardProcessDataset, RewardMixProcessDataset
+from openrlhf.datasets import RewardDataset, RewardProcessDataset, RewardMixProcessDataset, RewardMultiTaskDataset
 from openrlhf.models import get_llm_for_sequence_regression
 from openrlhf.trainer import RewardModelTrainer, ProcessRewardModelTrainer, RewardProcessMixModelTrainer
 from openrlhf.utils import blending_datasets, get_strategy, get_tokenizer
@@ -64,6 +64,9 @@ def train(args):
     elif args.process_supervision:
         train_dataset = RewardProcessDataset(train_data, tokenizer, args.max_len, strategy, input_template=args.input_template)
         eval_dataset = RewardProcessDataset(eval_data, tokenizer, args.max_len, strategy, input_template=args.input_template)
+    elif args.use_multi_task:
+        train_dataset = RewardMultiTaskDataset(train_data, tokenizer, args.max_len, strategy, input_template=args.input_template)
+        eval_dataset = RewardMultiTaskDataset(eval_data, tokenizer, args.max_len, strategy, input_template=args.input_template)
     else:
         train_dataset = RewardDataset(train_data, tokenizer, args.max_len, strategy, input_template=args.input_template)
         eval_dataset = RewardDataset(eval_data, tokenizer, args.max_len, strategy, input_template=args.input_template)
@@ -72,7 +75,7 @@ def train(args):
         train_dataset,
         args.micro_train_batch_size,
         True,
-        True,
+        False,
         train_dataset.collate_fn,
     )
     eval_dataloader = strategy.setup_dataloader(
@@ -223,6 +226,9 @@ if __name__ == "__main__":
     parser.add_argument("--response_key", type=str, default=None)
     parser.add_argument("--label_key", type=str, default=None)
     parser.add_argument("--source_key", type=str, default=None)
+    parser.add_argument("--choice_type_key", type=str, default=None)
+    parser.add_argument("--chosen_step_key", type=str, default=None)
+    parser.add_argument("--rejected_step_key", type=str, default=None)
 
     # wandb pamameters
     parser.add_argument("--use_wandb", type=str, default=None)
@@ -237,6 +243,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_mpi_init", action="store_true", default=False)
     parser.add_argument("--process_supervision", action="store_true", default=False)
     parser.add_argument("--mix_supervision", action="store_true", default=False)
+    parser.add_argument("--use_multi_task", action="store_true", default=False)
     parser.add_argument("--activation_offload", action="store_true", default=False)
     parser.add_argument("--model_offload", action="store_true", default=False)
 

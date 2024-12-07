@@ -154,3 +154,8 @@ core
 examples/*
 tools/*
 configs/*
+
+checkpoints/*
+reward/*
+datasets/*
+logs/*

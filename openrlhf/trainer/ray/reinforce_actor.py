@@ -339,6 +339,8 @@ class ActorModelRayActor(BasePPORole):
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
             tokenizer_reward=self.tokenizer_reward,
+            use_mcts = args.use_mcts,
+            use_vinevalue = args.use_vinevalue,
         )
 
         trainer.fit(self.prompts_dataloader, self.pretrain_dataloader, args)

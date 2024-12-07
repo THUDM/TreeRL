@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, List
 
 # import bitsandbytes as bnb
 import deepspeed
@@ -53,6 +53,13 @@ def compute_reward_naive(
     clip_reward_range = 1.5
 
     kl = compute_approx_kl(log_probs, log_probs_base, action_mask=action_mask)
+
+    # assert kl.shape == r.shape, f"kl shape: {kl.shape} != r shape: {r.shape}"
+
+    print(f"kl reward shape: {kl.shape}, kl_coef: {kl_coef}, r shape: {r.shape},log_probs shape: {log_probs.shape}, log_probs_base shape: {log_probs_base.shape}, action_mask shape: {action_mask.shape}")
+    # with open("/workspace/lurui/openrlhf-glm/logs/outputs/kl_reward.txt", "a") as f:
+    #     f.write(str(kl) + str(r)+ "\n")
+
     # kl = compute_kl(log_probs, log_probs_base, action_mask=action_mask)
 
     kl_reward = -kl_coef * kl
@@ -90,7 +97,8 @@ def compute_reward(
     log_probs_base: torch.Tensor,
     action_mask: Optional[torch.Tensor] = None,
     clip_reward_range: float = 5,
-    process_reward: bool = False
+    process_reward: bool = False,
+    value: Optional[torch.Tensor] = None
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     if kl_coef <= 0.0:
         kl_coef = 0.0
@@ -119,13 +127,66 @@ def compute_reward(
         reward = r + kl_reward
     else:
         eos_indices = action_mask.size(1) - 1 - action_mask.long().fliplr().argmax(dim=1, keepdim=True)
-        last_reward = torch.zeros_like(kl).scatter_(dim=1, index=eos_indices, src=r.unsqueeze(1).to(kl.dtype))
+        # value 中 eos_indices 位置的值组成的 tensor
+        if value is not None:
+            value_position = value.gather(1, eos_indices)
+            print(f"eos_indices: {eos_indices.shape}, r: {r.shape}, kl: {kl_reward.shape}, action_mask: {action_mask.shape},value position:{value_position}")
+        if r.shape == eos_indices.shape:
+            last_reward = torch.zeros_like(kl).scatter_(dim=1, index=eos_indices, src=r.to(kl.dtype))
+        else:
+            last_reward = torch.zeros_like(kl).scatter_(dim=1, index=eos_indices, src=r.unsqueeze(1).to(kl.dtype))
 
         reward = last_reward + kl_reward    
     
     # reward = reward * action_mask.float()
     
     return reward, kl
+
+# def compute_reward_sentence_advantage(
+#     r: Union[torch.Tensor, float],
+#     kl_coef: float,
+#     log_probs: torch.Tensor,
+#     log_probs_base: torch.Tensor,
+#     action_mask: Optional[torch.Tensor] = None,
+#     clip_reward_range: float = 5,
+#     process_reward: bool = False,
+#     value: Optional[torch.Tensor] = None,
+#     seq_path_lens: Optional[List] = None
+
+# ) -> Tuple[torch.Tensor, torch.Tensor]:
+#     if kl_coef <= 0.0:
+#         kl_coef = 0.0
+
+#     kl = compute_approx_kl(log_probs, log_probs_base, action_mask=action_mask)
+#     # kl = compute_kl(log_probs, log_probs_base, action_mask=action_mask)
+
+#     kl_reward = -kl_coef * kl
+
+#     r = r.clamp(min=-clip_reward_range, max=clip_reward_range)
+
+#     for 
+    
+#     if process_reward:
+#         # !bug
+#         # RuntimeError: The size of tensor a (1709) must match the size of tensor b (1180) at non-singleton dimension 1
+#         # print(f"reward: {r.shape}, kl: {kl_reward.shape}, logp: {log_probs.shape}")
+#         reward = r + kl_reward
+#     else:
+#         eos_indices = action_mask.size(1) - 1 - action_mask.long().fliplr().argmax(dim=1, keepdim=True)
+#         # value 中 eos_indices 位置的值组成的 tensor
+#         if value is not None:
+#             value_position = value.gather(1, eos_indices)
+#             print(f"eos_indices: {eos_indices.shape}, r: {r.shape}, kl: {kl_reward.shape}, action_mask: {action_mask.shape},value position:{value_position}")
+#         if r.shape == eos_indices.shape:
+#             last_reward = torch.zeros_like(kl).scatter_(dim=1, index=eos_indices, src=r.to(kl.dtype))
+#         else:
+#             last_reward = torch.zeros_like(kl).scatter_(dim=1, index=eos_indices, src=r.unsqueeze(1).to(kl.dtype))
+
+#         reward = last_reward + kl_reward    
+    
+#     # reward = reward * action_mask.float()
+    
+#     return reward, kl
 
 
 def log_probs_from_logits(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
@@ -138,7 +199,7 @@ def masked_mean(tensor: torch.Tensor, mask: torch.Tensor, dim: int = None) -> to
     if dim is not None:
         return (tensor * mask).sum(axis=dim) / (mask.sum(axis=dim) + 1e-7)
     else:
-        return (tensor * mask).sum() / mask.sum()
+        return (tensor * mask).sum() / (mask.sum()+ 1e-7)
 
 
 def masked_normalize(tensor: torch.Tensor, mask: torch.Tensor, dim: int = 1, eps: float = 1e-8) -> torch.Tensor:

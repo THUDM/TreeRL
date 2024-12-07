@@ -71,7 +71,7 @@ class Actor(nn.Module):
             nf4_config = None
 
             print(f"########## loading actor model from: {pretrain_or_model} ##########")
-            if "qwen" in pretrain_or_model:
+            if "qwen" in pretrain_or_model.lower():
                 self.model = AutoModelForCausalLM.from_pretrained(
                     pretrain_or_model,
                     attn_implementation=attn_implementation,

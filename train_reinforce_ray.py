@@ -215,7 +215,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_batch_size", type=int, default=128)
     parser.add_argument("--load_checkpoint", action="store_true", default=False)
     parser.add_argument("--top_p", type=float, default=1.0)
-    parser.add_argument("--min_p", type=float, default=0.05)
+    parser.add_argument("--min_p", type=float, default=0)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=42)
 
@@ -299,6 +299,8 @@ if __name__ == "__main__":
     parser.add_argument("--use_random_top_k_logits_sampling", action="store_true", default=False)
     parser.add_argument("--use_general_reward_for_stem", action="store_true", default=False)
     parser.add_argument("--random_temperature", action="store_true", default=False)
+    parser.add_argument("--use_mcts", action="store_true", default=False)
+    parser.add_argument("--use_vinevalue", action="store_true", default=False)
 
     args = parser.parse_args()
     train(args)

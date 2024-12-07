@@ -26,18 +26,32 @@ class NaiveExperienceMakerReinforce(NaiveExperienceMaker):
     
 
     @torch.no_grad()
-    def _make_experience(self, prompts: Union[str, List[str]], **generate_kwargs) -> Experience:
+    def _make_experience(self, prompts: Union[str, List[str]],**generate_kwargs) -> Experience:
         self.actor.eval()
+        use_mcts = getattr(generate_kwargs, "use_mcts", 0)
 
-        experiences = self.sample_responses(
+        if use_mcts:
+            print("using mcts!!")
+            experiences = self.sample_responses_bymcts(
             prompts,
             getattr(self.strategy.args, "num_trace_per_sample", 1), 
             **generate_kwargs
         )
+        else:
+            print("not using mcts!!")
+            experiences = self.sample_responses(
+                prompts,
+                getattr(self.strategy.args, "num_trace_per_sample", 1), 
+                **generate_kwargs
+            )
         action_mask = experiences["action_mask"]
         attention_mask = experiences["attention_mask"]
         
         experience_reward = experiences["reward"]
+        overlong_mask = experiences["overlong_mask"]
+        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/overlong_mask.jsonl","a") as f:
+        #     f.write(json.dumps(overlong_mask.tolist()) + "\n")
+        print("logging overlong mask",experiences["overlong_mask"], overlong_mask.sum() / overlong_mask.numel())
         # experience_reward[experience_reward < 0] *= 0.5
         reward, kl = compute_reward_naive(
             experience_reward,
@@ -69,14 +83,15 @@ class NaiveExperienceMakerReinforce(NaiveExperienceMaker):
             return piece
 
         response_entropy = -(experiences["action_log_probs"] * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
-        
+        print("action_mask_lastdigit",action_mask[:,-1])
         info = {
             "kl": masked_mean(kl, action_mask, dim=-1),
             "reward": reformat_reward_for_info(experiences["raw_reward"]),
             "reward_normalized": reformat_reward_for_info(experiences["reward"]),
             "response_length": action_mask.float().sum(dim=-1),
             "total_length": attention_mask.float().sum(dim=-1),
-            "response_overlong_ratio": (action_mask[:, -1] == 0).float(),
+            # "response_overlong_ratio": (action_mask[:, -1] == 0).float(),
+            "response_overlong_ratio": overlong_mask.sum() / overlong_mask.numel(),
             "pass_rate": experiences["pass_rate"] if "pass_rate" in experiences else 0,
             "response_entropy": response_entropy,
         }
@@ -122,7 +137,7 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
 
 
     @torch.no_grad()
-    def make_experience(self, prompts: Union[str, List[str]], **generate_kwargs) -> Experience:
+    def make_experience(self, prompts: Union[str, List[str]], use_mcts, use_vinevalue, use_sentence_level_value, **generate_kwargs) -> Experience:
         self.actor.eval()
         # device = torch.cuda.current_device()
 
@@ -168,26 +183,85 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
         # base_action_log_probs = base_action_log_probs.to(device)
         # rewards = [r.to(device) for r in rewards]
         # r = self.reward_fn(rewards) if len(rewards) > 0 else rewards[0]
-
-        experiences = self.sample_responses(
-            prompts,
-            getattr(self.strategy.args, "num_trace_per_sample", 1), 
-            **generate_kwargs
-        )
+        # use_mcts = getattr(generate_kwargs, "use_mcts", 1)
+        # use_vinevalue = getattr(generate_kwargs, "use_vinevalue", 0)
+        print("use_mcts", use_mcts)
+        print("use_vinevalue", use_vinevalue)
+        print("file_name",str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl")
+        if use_mcts:
+            if use_vinevalue:
+                print("use vinevalue!!")
+                experiences = self.sample_responses_bymcts_use_vinevalue(
+                    prompts,
+                    getattr(self.strategy.args, "num_trace_per_sample", 1), 
+                    file_name = "/workspace/lurui/openrlhf-glm/logs/samplings/"+str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl",
+                    use_sentence_level_value = use_sentence_level_value,
+                    **generate_kwargs
+                )
+            else:
+                print("use mcts!!")
+                experiences = self.sample_responses_bymcts(
+                    prompts,
+                    getattr(self.strategy.args, "num_trace_per_sample", 1), 
+                    file_name = "/workspace/lurui/openrlhf-glm/logs/samplings/"+str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl",
+                    **generate_kwargs
+            )
+        else:
+            print("not use mcts!!")
+            experiences = self.sample_responses(
+                prompts,
+                getattr(self.strategy.args, "num_trace_per_sample", 1), 
+                **generate_kwargs
+            )
         action_mask = experiences["action_mask"]
         attention_mask = experiences["attention_mask"]
         
         experience_reward = experiences["reward"]
+        overlong_mask = experiences["overlong_mask"]
         # experience_reward[experience_reward < 0] *= 0.5
-        reward, kl = compute_reward_naive(
-            experience_reward,
-            self.kl_ctl.value,
-            experiences["action_log_probs"],
-            experiences["base_action_log_probs"],
-            action_mask=action_mask,
-            kl_as_reward=True,
-            process_reward=self.strategy.args.process_supervision
-        )
+        if use_vinevalue and (not use_sentence_level_value):
+            print("reward: ",experience_reward)
+            print("value: ",experiences["values"])
+            reward, kl = compute_reward(
+                experiences["reward"],
+                self.kl_ctl.value,
+                experiences["action_log_probs"],
+                experiences["base_action_log_probs"],
+                action_mask=action_mask,
+                process_reward=self.strategy.args.process_supervision,
+                value = experiences["values"]
+            )
+            advantage, returns = self.get_advantages_and_returns(
+                experiences["values"],
+                reward,
+                action_mask,
+                generate_kwargs["gamma"],
+                generate_kwargs["lambd"],
+                experiences["sequences"]
+            )
+        elif use_vinevalue and use_sentence_level_value:
+            print("reward: ",experience_reward)
+            print("value: ",experiences["values"])
+            advantage, returns = self.get_advantages_and_returns(
+                experiences["values"],
+                reward,
+                action_mask,
+                generate_kwargs["gamma"],
+                generate_kwargs["lambd"],
+            )
+            print("advantage",advantage)
+            with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
+                f.write(json.dumps({"advantage":advantage.tolist()}) + "\n")
+        else:
+            reward, kl = compute_reward_naive(
+                experience_reward,
+                self.kl_ctl.value,
+                experiences["action_log_probs"],
+                experiences["base_action_log_probs"],
+                action_mask=action_mask,
+                kl_as_reward=True,
+                process_reward=self.strategy.args.process_supervision
+            )
         # sample_kl = (kl.abs() * action_mask).sum(1) / action_mask.sum(1)
         # sample_kl_mask = (sample_kl <= 0.3).view(-1, 1).float()
         # reward = reward * sample_kl_mask
@@ -208,17 +282,59 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
             return piece
 
         response_entropy = -(experiences["action_log_probs"] * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
+        with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
+            sequences = experiences["sequences"]
+            num_actions = action_mask.size(1)
+            for s in range(sequences.shape[0]):
+                match_list = []
+                for i in range(reward[0].shape[0]):
+                    str_seq = self.tokenizer.decode([sequences[s][-num_actions+i].to("cpu").tolist()], skip_special_tokens=True)
+                    match_list.append({"reward":reward[s][i].item(),"content":str_seq})
+                f.write(json.dumps(match_list) + "\n")
         
-        info = {
-            "kl": masked_mean(kl, action_mask, dim=-1),
-            "reward": reformat_reward_for_info(experiences["raw_reward"]),
-            "reward_normalized": reformat_reward_for_info(experiences["reward"]),
-            "response_length": action_mask.float().sum(dim=-1),
-            "total_length": attention_mask.float().sum(dim=-1),
-            "response_overlong_ratio": (action_mask[:, -1] == 0).float(),
-            "pass_rate": experiences["pass_rate"] if "pass_rate" in experiences else 0,
-            "response_entropy": response_entropy,
-        }
+        if use_vinevalue:
+            info = {
+                "kl": masked_mean(kl, action_mask, dim=-1),
+                "reward": reformat_reward_for_info(experiences["raw_reward"]),
+                "value": reformat_reward_for_info(experiences["values"]),
+                "advantage": reformat_reward_for_info(advantage),
+                "returns": reformat_reward_for_info(returns),
+                "reward_normalized": reformat_reward_for_info(experiences["reward"]),
+                "response_length": action_mask.float().sum(dim=-1),
+                "total_length": attention_mask.float().sum(dim=-1),
+                # "response_overlong_ratio": (action_mask[:, -1] == 0).float(),
+                "response_overlong_ratio": overlong_mask.float(),
+                "pass_rate": experiences["pass_rate"] if "pass_rate" in experiences else 0,
+                "pass_at_1": experiences["pass_at_1"] if "pass_at_1" in experiences else 0,
+                "response_entropy": response_entropy,
+            }
+        elif use_mcts:
+            #输出reformat_reward_for_info(experiences["raw_reward"]是否有NAN
+            print("reward to log",experiences["raw_reward"].shape,any(torch.isnan(reformat_reward_for_info(experiences["raw_reward"]))) )
+            info = {
+                "kl": masked_mean(kl, action_mask, dim=-1),
+                "reward": reformat_reward_for_info(experiences["raw_reward"]),
+                "reward_normalized": reformat_reward_for_info(experiences["reward"]),
+                "response_length": action_mask.float().sum(dim=-1),
+                "total_length": attention_mask.float().sum(dim=-1),
+                # "response_overlong_ratio": (action_mask[:, -1] == 0).float(),
+                "response_overlong_ratio": overlong_mask.float(),
+                "pass_rate": experiences["pass_rate"] if "pass_rate" in experiences else 0,
+                "pass_at_1": experiences["pass_at_1"] if "pass_at_1" in experiences else 0,
+                "response_entropy": response_entropy,
+            }
+        else:
+            info = {
+                "kl": masked_mean(kl, action_mask, dim=-1),
+                "reward": reformat_reward_for_info(experiences["raw_reward"]),
+                "reward_normalized": reformat_reward_for_info(experiences["reward"]),
+                "response_length": action_mask.float().sum(dim=-1),
+                "total_length": attention_mask.float().sum(dim=-1),
+                # "response_overlong_ratio": (action_mask[:, -1] == 0).float(),
+                "response_overlong_ratio": overlong_mask.float(),
+                "pass_rate": experiences["pass_rate"] if "pass_rate" in experiences else 0,
+                "response_entropy": response_entropy,
+            }
 
         if self.strategy.args.perf:
             info = self.log_perf(info, experiences, getattr(self.strategy.args, "num_trace_per_sample", 1))
@@ -227,16 +343,28 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
         # eos_indices = action_mask.float().shape[1] - 1 - action_mask.float().fliplr().argmax(dim=1)
         # mask = torch.arange(action_mask.size(1), device=action_mask.device).unsqueeze(0) == eos_indices.unsqueeze(1)
         # reward = torch.where((reward < 0) * mask, torch.zeros_like(reward), reward)
-
-        experience = Experience(
-            sequences=experiences["sequences"],
-            action_log_probs=experiences["action_log_probs"],
-            advantages=reward,
-            attention_mask=attention_mask,
-            action_mask=action_mask,
-            info=info,
-            kl=kl
-        )
+        if use_vinevalue:
+            experience = Experience(
+                sequences=experiences["sequences"],
+                action_log_probs=experiences["action_log_probs"],
+                values = experiences["values"],
+                advantages = advantage,
+                returns=returns,
+                attention_mask=attention_mask,
+                action_mask=action_mask,
+                info=info,
+                kl=kl
+            )
+        else:
+            experience = Experience(
+                sequences=experiences["sequences"],
+                action_log_probs=experiences["action_log_probs"],
+                advantages=reward,
+                attention_mask=attention_mask,
+                action_mask=action_mask,
+                info=info,
+                kl=kl
+            )
 
         # send experience to critic
         experience_cpu = deepcopy(experience)

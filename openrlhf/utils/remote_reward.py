@@ -284,19 +284,19 @@ def get_stem_eval(
     use_rule_based_reward=False,
     use_general_reward_for_reason=False
 ):
-    remote_stem_urls = remote_urls["stem"]
+    remote_stem_urls = remote_urls["math_checker"]
     
     extracted_answer, raw_remote_reward = check_result(remote_stem_urls, (query, response, label))
     # raw_remote_rewards = raw_remote_rewards.to(torch.cuda.current_device())
     binary_reward = raw_remote_reward
     assert binary_reward in (0, 1), f"binary_reward={binary_reward}"
     if use_general_reward_for_reason:
-        remote_model_urls = remote_urls["stem_model"]
+        remote_model_urls = remote_urls["math_RM"]
         # _remote_model_rm_urls = load_reward_url(self.remote_reward_url[1])
         # rm_based_reward = _remote_reward_model_evaluation(remote_model_urls, (query, response))
         _rm_based_reward = get_general_chat_eval(query, response, remote_model_urls, tokenizer=tokenizer)
-        # rm_based_rewards = rm_based_rewards.to(torch.cuda.current_device())
-        # rm_based_rewards = torch.sigmoid(0.5 * rm_based_rewards)
+        # close sigmoid
+        # rm_based_reward = _rm_based_reward
         rm_based_reward = 1 / (1 + math.exp(-_rm_based_reward))
         coeff = 0.3
         raw_remote_reward = raw_remote_reward + coeff * rm_based_reward
@@ -314,7 +314,8 @@ def get_stem_eval(
 
 
 def get_code_eval(queries, remote_urls):
-    raise NotImplementedError
+    return random.random(), 1, "[[Code; no answer]]"
+    # raise NotImplementedError
 
 
 def query_remote_reward_single_worker(
@@ -359,7 +360,8 @@ def query_remote_reward_single_worker(
             use_rule_based_reward=use_rule_based_reward
         )
     elif source in ("code"):
-        raise NotImplementedError
+        result, binary_result, extracted_answer = get_code_eval(query, urls)
+        # raise NotImplementedError
     elif source in ("chat"):
         _urls = urls["chat"]
         result = get_general_chat_eval(question, response, _urls, tokenizer)
@@ -408,3 +410,73 @@ def get_remote_reward_entry(
     results = torch.tensor(results).float()
 
     return extracted_answers, results, binary_results
+
+def get_remote_reward_entry_mcts_mask(
+    queries, 
+    overlong_mask,
+    use_rule_based_reward=False
+):
+    assert isinstance(queries[0], dict), f"elements of queries must be dict, found {type(queries[0])}"
+
+    '''queries = [{
+                "prompt": x[0],
+                "response": x[1],
+                "label": x[2],
+                "reward": x[3], # [.....]token length
+                "attention_mask": x[4], # [.....]token length
+                "data_type": y
+            }]
+    '''
+    
+    for item, ovl in zip(queries, overlong_mask):
+        item["is_overlong"] = not bool(ovl)
+
+    results = []
+    attention_mask = []
+    threshold = 0.2
+    for query in queries:
+        raw_reward = query["reward"].tolist()
+        if use_rule_based_reward and not query["is_overlong"]:
+            if raw_reward < threshold:
+                rule_reward = _get_rule_base_reward(query["response"], use_expected_pattern=True, )
+                raw_remote_reward = raw_remote_reward + rule_reward
+        results.append(raw_reward)
+        attention_mask.append(query["attention_mask"].tolist())
+    results = torch.tensor(results).float()
+    #转为整数
+    attention_mask = torch.tensor(attention_mask).float()
+    print("reward returned:",results)
+    print("attention_mask returned:",attention_mask.shape)
+    return results, attention_mask
+
+def get_remote_reward_entry_mcts(
+    queries, 
+    overlong_mask,
+    use_rule_based_reward=False
+):
+    assert isinstance(queries[0], dict), f"elements of queries must be dict, found {type(queries[0])}"
+
+    '''queries = [{
+                "prompt": x[0],
+                "response": x[1],
+                "label": x[2],
+                "reward": x[3], # [.....]token length
+                "data_type": y
+            }]
+    '''
+    
+    for item, ovl in zip(queries, overlong_mask):
+        item["is_overlong"] = not bool(ovl)
+
+    results = []
+    threshold = 0.2
+    for query in queries:
+        raw_reward = query["reward"].tolist()
+        if use_rule_based_reward and not query["is_overlong"]:
+            if raw_reward < threshold:
+                rule_reward = _get_rule_base_reward(query["response"], use_expected_pattern=True, )
+                raw_remote_reward = raw_remote_reward + rule_reward
+        results.append(raw_reward)
+    results = torch.tensor(results).float()
+    print("reward returned:",results)
+    return results

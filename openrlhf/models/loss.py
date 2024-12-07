@@ -173,6 +173,27 @@ class LogExpLoss(nn.Module):
         loss = torch.log(1 + torch.exp(reject_reward - chosen_reward)).mean()
         return loss
 
+class PointAndPairLoss(nn.Module):
+    def forward(self, chosen_reward: torch.Tensor, reject_reward: torch.Tensor, margin: torch.Tensor = None
+    ) -> torch.Tensor:
+        if margin is not None:
+            loss_pair = -F.logsigmoid(chosen_reward - reject_reward - margin)
+        else:
+            loss_pair = -F.logsigmoid(chosen_reward - reject_reward)
+        loss_point = - F.logsigmoid(-reject_reward) - F.logsigmoid(chosen_reward)
+        # loss_point = - F.logsigmoid(chosen_reward)
+        coeff = 0.2
+        loss = loss_pair.mean() + coeff * loss_point.mean()
+        # print(loss_point.mean(), loss_pair.mean())
+        return loss
+
+
+class PointWiseLoss(nn.Module):
+    def forward(self, chosen_reward: torch.Tensor, reject_reward: torch.Tensor, margin: torch.Tensor = None
+    ) -> torch.Tensor:
+        loss_point = - F.logsigmoid(-reject_reward) - F.logsigmoid(chosen_reward)
+        return loss_point.mean()
+
 
 class PointSigmoidLoss(nn.Module):
     def forward(self, reward, label):

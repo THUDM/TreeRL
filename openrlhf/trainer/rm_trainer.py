@@ -17,7 +17,9 @@ from openrlhf.models import (
     SwitchBalancingLoss, 
     PointSigmoidLoss, 
     PointMSELoss,
-    CrossEntropyLoss
+    CrossEntropyLoss,
+    PointAndPairLoss,
+    PointWiseLoss
 )
 
 
@@ -74,6 +76,10 @@ class RewardModelTrainer(ABC):
             self.loss_fn = PointMSELoss()
         elif loss == "crossentropy":
             self.loss_fn = CrossEntropyLoss()
+        elif loss == "pointandpair":
+            self.loss_fn = PointAndPairLoss()
+        elif loss == "pointwise":
+            self.loss_fn = PointWiseLoss()
         else:
             raise NotImplemented
         
@@ -657,6 +663,7 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                             reject_reward = reject_reward.float()
                                                 
                         if chosen_ids.shape[0] > reject_ids.shape[0]:
+                            raise NotImplementedError
                             inst_rewards = chosen_reward[len(reject_reward):]
                             _chosen_reward = chosen_reward[: len(reject_reward)]
 
@@ -684,6 +691,7 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                             # preference_loss = preference_loss + 0.001 * regularization_loss
                         c_loss = preference_loss
                     else:
+                        raise NotImplementedError
                         assert chosen_ids.numel() > 0 or reject_ids.numel() > 0, "both chosen and rejected samples are empty"
                         
                         rewards, aux_loss = self.non_concatenated_forward(self.model, chosen_ids, c_mask)
@@ -732,8 +740,9 @@ class RewardProcessMixModelTrainer(RewardModelTrainer):
                 self.strategy.backward(loss, self.model, self.optimizer)
                 self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler)
 
-                loss_mean = loss_mean * 0.9 + 0.1 * preference_loss.item()
+                # loss_mean = loss_mean * 0.9 + 0.1 * preference_loss.item()
                 # optional rm info
+                loss_mean = loss_mean * 0.1 + 0.9 * preference_loss.item()
                 logs_dict = {
                     "p_loss": p_loss.item() if p_loss is not None else 1,
                     "c_loss": c_loss.item() if c_loss is not None else 1,

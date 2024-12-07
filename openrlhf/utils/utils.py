@@ -589,7 +589,7 @@ def query_vllm_platform(prompt, history=[], do_sample=True, url=None, max_tokens
     ]
     # 这里 model 名称随便填都行
     request_data = {
-        "model": "Meta-Llama-3.1-70B-Instruct",
+        "model": "/workspace/yujiang/models/Meta-Llama-3.1-70B-Instruct",
         "messages": messages,
         "temperature": 0,
         "max_tokens": max_tokens,
@@ -604,6 +604,7 @@ def query_vllm_platform(prompt, history=[], do_sample=True, url=None, max_tokens
             if response.status_code == 200:
                 resp_json = response.json()
                 content = resp_json['choices'][0]['message']['content'].strip()
+                print(f"vllm response: {content}")
                 return content
             else:
                 print(
@@ -613,6 +614,7 @@ def query_vllm_platform(prompt, history=[], do_sample=True, url=None, max_tokens
             print(f"error in vllm, exception: {e}, url={url}")
             
     return None
+query_vllm_platform("Are you ready?", [], do_sample=True, url="http://172.18.70.13:8000", max_tokens=512, max_retry=1)
 
 
 def query_chatglm_tgi(prompt, history=[], do_sample=False, max_tokens=256, max_retry=3, url=None, temperature=0.4, top_p=0.1):

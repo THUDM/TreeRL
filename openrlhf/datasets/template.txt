@@ -1,0 +1,8 @@
+"prompt": curr_node.problem,
+"history":None,
+"response_chosen_full": response_chosen,
+"response_rejected_full": response_rejected,
+"chosen_step":null/step,
+"rejected_step":null/step,
+"type": "full"/"step",
+"id": curr_node.id

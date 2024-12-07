@@ -383,7 +383,8 @@ if __name__ == "__main__":
     parser.add_argument("--use_rule_based_reward", action="store_true", default=False)
     parser.add_argument("--mask_pass_confident_samples", action="store_true", default=False)
     parser.add_argument("--use_random_top_k_logits_sampling", action="store_true", default=False)
-    parser.add_argument("--min_p", type=float, default=0.05)
+    parser.add_argument("--min_p", type=float, default=0)
+    parser.add_argument("--use_general_reward_for_stem", action="store_true", default=False)
 
     print("*********** LD_LIBRARY:", os.environ["LD_LIBRARY_PATH"])
     ray.get(test_env.remote())

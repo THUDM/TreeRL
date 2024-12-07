@@ -11,7 +11,7 @@ from torch.optim import Optimizer
 from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 
-from openrlhf.models import Actor, GPTLMLoss, ReinforcePolicyLoss, SwitchBalancingLoss, ValueLoss
+from openrlhf.models import Actor, GPTLMLoss, ReinforcePolicyLoss, SwitchBalancingLoss, ValueLoss, PolicyLoss
 from openrlhf.models.utils import masked_mean
 
 from .ppo_utils import AdaptiveKLController, FixedKLController, NaiveReplayBuffer
@@ -74,6 +74,8 @@ class ReinforceTrainer(ABC):
         remote_rm_url: List[str] = None,
         tokenizer_reward: Optional[Callable[[Any], dict]] = None,
         remote_reward_url: Optional[str] = None,
+        use_mcts: bool = False,
+        use_vinevalue: bool = False,
         **generate_kwargs,
     ) -> None:
         assert (
@@ -105,8 +107,13 @@ class ReinforceTrainer(ABC):
         self.ema_model = ema_model
         self.actor_optim = actor_optim
         self.actor_scheduler = actor_scheduler
+        self.use_mcts = use_mcts
+        self.use_vinevalue = use_vinevalue
 
-        self.actor_loss_fn = ReinforcePolicyLoss(eps_clip)
+        if use_vinevalue:
+            self.actor_loss_fn = PolicyLoss(eps_clip)
+        else:
+            self.actor_loss_fn = ReinforcePolicyLoss(eps_clip)
         self.ptx_loss_fn = GPTLMLoss()
 
         # Mixtral 8x7b
@@ -121,7 +128,7 @@ class ReinforceTrainer(ABC):
         #     actor, None, reward_model, initial_model, tokenizer, prompt_max_len, self.kl_ctl, strategy, reward_fn
         # )
         self.experience_maker = NaiveExperienceMakerReinforce(
-             actor, None, reward_model, remote_reward_url, initial_model, tokenizer, prompt_max_len, self.kl_ctl, strategy, reward_fn
+            actor, None, reward_model, remote_reward_url, initial_model, tokenizer, prompt_max_len, self.kl_ctl, strategy, reward_fn
         )
         self.replay_buffer = NaiveReplayBuffer(micro_train_batch_size, buffer_limit, buffer_cpu_offload)
 
@@ -146,6 +153,8 @@ class ReinforceTrainer(ABC):
             wandb.define_metric("train/*", step_metric="train/global_step", step_sync=True)
             wandb.define_metric("eval/epoch")
             wandb.define_metric("eval/*", step_metric="eval/epoch", step_sync=True)
+            # self.sample_table = pd.DataFrame(columns=["prompt", "response"])
+            
 
     def fit(
         self,
@@ -177,7 +186,9 @@ class ReinforceTrainer(ABC):
             )
 
             for rand_prompts in self.prompts_dataloader:
-                experience = self.experience_maker.make_experience(rand_prompts, **self.generate_kwargs)
+                # experience = self.experience_maker.make_experience(rand_prompts, use_mcts = self.use_mcts, use_vinevalue = self.use_vinevalue, sample_table = self.sample_table, **self.generate_kwargs)
+                experience = self.experience_maker.make_experience(rand_prompts, use_mcts = self.use_mcts, use_vinevalue = self.use_vinevalue,use_sentence_level_value = False, **self.generate_kwargs)
+
                 # print prompt/answer in each update step
                 # if global_step % update_timesteps == 0:
 
@@ -291,14 +302,22 @@ class ReinforceTrainer(ABC):
 
         # !!! potential BUG
         # loss function
-        actor_loss = self.actor_loss_fn(
-            action_log_probs,
-            experience.action_log_probs,
-            experience.advantages,
-            action_mask=experience.action_mask,
-            kl=experience.kl,
-            kl_coef=self.strategy.args.init_kl_coef,
-        )
+        if self.use_vinevalue:
+            actor_loss = self.actor_loss_fn(
+                action_log_probs,
+                experience.action_log_probs,
+                experience.advantages,
+                action_mask=experience.action_mask,
+            )
+        else:
+            actor_loss = self.actor_loss_fn(
+                action_log_probs,
+                experience.action_log_probs,
+                experience.advantages,
+                action_mask=experience.action_mask,
+                kl=experience.kl,
+                kl_coef=self.strategy.args.init_kl_coef,
+            )
 
         # mixtral
         if self.aux_loss:
@@ -347,8 +366,11 @@ class ReinforceTrainer(ABC):
                 status[k] = (
                     (v * experience.info["response_length"]).sum() / experience.info["response_length"].sum()
                 ).item()
-            elif k == "reward" and self.strategy.args.process_supervision:
-                status[k] = (v.sum() / (v != 0).sum()).item()
+            # elif (k == "reward") and self.strategy.args.process_supervision:
+            #     if (v != 0).sum() == 0:
+            #         status[k] = 0
+            #     else:
+            #         status[k] = (v.sum() / (v != 0).sum()).item()
             else:
                 status[k] = v.mean().item()
         return status
