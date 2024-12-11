@@ -67,7 +67,7 @@ def check_model_status(api_url):
         return False
 
 
-def wait_for_model_ready(api_url, initial_wait=40, check_interval=20, max_retries=10):
+def wait_for_model_ready(api_url, initial_wait=40, check_interval=30, max_retries=10):
     """等待模型服务就绪"""
     print(f"\nWaiting {initial_wait}s for model loading...")
     time.sleep(initial_wait)

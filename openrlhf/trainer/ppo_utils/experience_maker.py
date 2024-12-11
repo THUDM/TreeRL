@@ -395,22 +395,48 @@ def zero_pad_batch(sequences: List[torch.Tensor], side: str = "right", pad_token
     return torch.cat(padded_sequences, dim=0)
 
 
+# def _tokenize_fn_chatglm(tokenizer, prompt, history, max_length):
+#     input_ids = []
+#     if isinstance(history, str):
+#         history = json.loads(history)
+    
+#     if history:
+#         for item in history:
+#             input_ids.extend(tokenizer.build_single_message("user", "", item["prompt"]))
+#             input_ids.extend(tokenizer.build_single_message("assistant", "", item["response"]))
+    
+#     sample_input_ids = tokenizer.build_single_message("user", "", prompt)
+#     sample_input_ids = input_ids + sample_input_ids
+
+#     # sample_input_ids = sample_input_ids[-max_length:] \
+#         # + [tokenizer.get_command("<|assistant|>")] \
+#         # + tokenizer.encode("\n", add_special_tokens=False)
+#     sample_input_ids = sample_input_ids[-max_length:] + tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
+#     # sample = self.tokenizer.batch_encode_plus([sample_input_ids], return_tensors="pt", is_split_into_words=True)
+#     # return sample["input_ids"][0], sample["attention_mask"][0]
+#     return sample_input_ids
 def _tokenize_fn_chatglm(tokenizer, prompt, history, max_length):
+    gmask = tokenizer.encode("[gMASK]")[0]
+    sop = tokenizer.encode("<sop>")[0]
+    # input_ids = [gmask, sop]
     input_ids = []
     if isinstance(history, str):
         history = json.loads(history)
-    
     if history:
         for item in history:
-            input_ids.extend(tokenizer.build_single_message("user", "", item["prompt"]))
-            input_ids.extend(tokenizer.build_single_message("assistant", "", item["response"]))
-    
-    sample_input_ids = tokenizer.build_single_message("user", "", prompt)
+            _prompt = tokenizer.encode("<|user|>\n" + item["prompt"], add_special_tokens=False)
+            _response = tokenizer.encode("<|assistant|>\n" + item["response"], add_special_tokens=False)
+            # input_ids.extend(tokenizer.build_single_message("user", "", item["prompt"]))
+            # input_ids.extend(tokenizer.build_single_message("assistant", "", item["response"]))
+            input_ids.extend(_prompt)
+            input_ids.extend(_response)
+    # sample_input_ids = tokenizer.build_single_message("user", "", prompt)
+    sample_input_ids = tokenizer.encode("<|user|>\n" + prompt, add_special_tokens=False)
     sample_input_ids = input_ids + sample_input_ids
-
     # sample_input_ids = sample_input_ids[-max_length:] \
         # + [tokenizer.get_command("<|assistant|>")] \
         # + tokenizer.encode("\n", add_special_tokens=False)
+    # sample_input_ids = [gmask, sop] + 
     sample_input_ids = sample_input_ids[-max_length:] + tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
     # sample = self.tokenizer.batch_encode_plus([sample_input_ids], return_tensors="pt", is_split_into_words=True)
     # return sample["input_ids"][0], sample["attention_mask"][0]
@@ -453,9 +479,37 @@ def tokenize_fn_llama(tokenizer, texts, max_length, device):
     return {k: v.to(device) for k, v in batch.items()}
 
 
+# def tokenize_fn_chatglm(tokenizer, texts, max_length, device):
+#     batch = [_tokenize_fn_chatglm(tokenizer, prompt=_prompt, history=_history, max_length=max_length) for _prompt, _history in zip(*texts)]
+#     batch = tokenizer.batch_encode_plus(batch, return_tensors="pt", is_split_into_words=True, padding=True)
+#     return {k: v.to(device) for k, v in batch.items()}
 def tokenize_fn_chatglm(tokenizer, texts, max_length, device):
     batch = [_tokenize_fn_chatglm(tokenizer, prompt=_prompt, history=_history, max_length=max_length) for _prompt, _history in zip(*texts)]
-    batch = tokenizer.batch_encode_plus(batch, return_tensors="pt", is_split_into_words=True, padding=True)
+    batch_length = max([len(x) for x in batch])
+    max_length = min(max_length, batch_length)
+    pad_token_id = tokenizer.pad_token_id    
+    gmask = tokenizer.convert_tokens_to_ids("[gMASK]")
+    sop = tokenizer.convert_tokens_to_ids("<sop>")
+    def batch_encode_plus(input_ids):
+        input_ids = [gmask, sop] + input_ids
+        sample_len = len(input_ids)
+        _max_length = max_length + 2
+        if sample_len < _max_length:
+            attention_mask = [0] * (_max_length - sample_len) + [1] * sample_len
+            input_ids = [pad_token_id] * (_max_length - sample_len) + input_ids
+        else:
+            attention_mask = [1] * _max_length
+        input_ids = torch.tensor(input_ids)
+        attention_mask = torch.tensor(attention_mask)
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
+    try:
+        batch = tokenizer.batch_encode_plus(batch, return_tensors="pt", is_split_into_words=True, padding=True)
+    except:
+        batch = [batch_encode_plus(x) for x in batch]
+        batch = {
+            "input_ids": torch.stack([x["input_ids"] for x in batch]),
+            "attention_mask": torch.stack([x["attention_mask"] for x in batch]),
+        }   
     return {k: v.to(device) for k, v in batch.items()}
 
 
@@ -2037,8 +2091,12 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     # div_std=div_std   
                 )   
                 
+        # if self.strategy.args.mask_repeated_samples:
+        #     r = r * repeated_mask
         if self.strategy.args.mask_repeated_samples:
-            r = r * repeated_mask
+            # r = r * repeated_mask
+            print("repeated_mask",repeated_mask.shape,"r",r.shape)
+            r[repeated_mask == 0] = -1
 
         if self.remote_reward_url:
             assert batch_first, f"batch_first must be set to True: {batch_first}"

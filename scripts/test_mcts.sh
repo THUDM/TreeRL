@@ -92,6 +92,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --use_mcts \
     --process_supervision \
     --mask_repeated_samples \
+    --enable_prefix_caching \
     # --use_rule_based_reward \
     # --random_temperature \
     # --use_rule_based_reward \

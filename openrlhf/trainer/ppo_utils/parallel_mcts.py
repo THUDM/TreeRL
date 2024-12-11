@@ -82,6 +82,8 @@ ips = rm_api_config['ip']
 for key, value in ips.items():
     RM_URLS.extend([key for _ in range(value)])
 
+eos_tokens_set = [151329,151336,151338]
+
 # import cProfile
 # import line_profiler
 # def profile_with_time(output_dir="profile_results"):
@@ -539,13 +541,14 @@ class MCTSr(BaseModel):
             except Exception as e:
                 print(f"Expansion failed with exception: {e}")
                 break
+            # results = self.expand(nodes)
             # print(results)
 
             self.total_token_num += results[1]
 
             for node, child_num in results[0]:
                 if child_num == 0:
-                    print(f"Cannot expand the node {node}")
+                    # print(f"Cannot expand the node {node}")
                     continue
                 else:
                     node_number += child_num
@@ -573,6 +576,10 @@ class MCTSr(BaseModel):
                 print(f"terminated because reach {leaf_num} leaf nodes")
                 terminal_flag = True
                 break
+        with open("/workspace/lurui/openrlhf-glm/logs/outputs/leaves.jsonl", "a") as f:
+            #输出len(self.leaves)数量即可
+            f.write(json.dumps({"leaf num": len(self.leaves)}))
+
         
         self.select_terminal()
 
@@ -598,6 +605,8 @@ class MCTSr(BaseModel):
         
     # @profile_with_time(output_dir="run_function_profile_yujiang")
     def expand(self, nodes):
+        if len(nodes) == 0:
+            return [], 0
         stops = get_stops()
         all_children_token_num = 0
         max_tokens_per_step = 512
@@ -644,10 +653,10 @@ class MCTSr(BaseModel):
                     continue  # 如果响应为空或未结束，跳过
 
                 action = response
-                if not (stop_token is None):
+                if not ((stop_token is None) or (stop_token in eos_tokens_set)):
                     action += stop_token
 
-                if len(response_token) < 1 and (not (stop_token is None)):
+                if len(response_token) < 1 and (not ((stop_token is None) or (stop_token in eos_tokens_set))):
                     continue  # 如果动作太短且没有结束标记，跳过
 
                 new_action = action
@@ -675,7 +684,7 @@ class MCTSr(BaseModel):
                 new_aggregate_answer = node.aggregate_answer + new_action
                 new_aggregate_answer_token = node.aggregate_answer_token + new_action_token
                 all_children_token_num += token_num_list[0]  # 假设我们使用列表中的第一个标记数
-                if stop_token is None:
+                if stop_token is None or stop_token in eos_tokens_set:
                     if_finish = True
                 else:
                     if_finish = False
@@ -760,11 +769,36 @@ class MCTSr(BaseModel):
                 if parent.visited_terminal == parent.terminal_in_subtree:
                     parent.accumulated_value = parent.accumulated_value / parent.terminal_in_subtree
                 parent = parent.parent
+        self.normalize_all_steps()
+
+    def normalize_all_steps(self):
+        # 从root开始遍历所有节点，对所有terminal_in_subtree！=0节点的accumulated_value进行归一化
+        all_steps = []
+        to_consider = deque([self.root])
+        while to_consider:
+            current_node = to_consider.popleft()
+            if current_node.terminal_in_subtree != 0 or current_node.terminal:
+                all_steps.append(current_node)
+            to_consider.extend(current_node.children)
+
+        print("all_step value",[node.accumulated_value for node in all_steps],len(all_steps))
+        step_sum = 0
+        step_num = 0
+        for node in all_steps:
+            step_sum += node.accumulated_value*node.terminal_in_subtree
+            step_num += node.terminal_in_subtree
+        if step_num == 0:
+            mean = 0
+        else:
+            mean = step_sum/step_num
+        print("mean:", mean,step_sum,step_num)
+        for node in all_steps:
+            node.accumulated_value = node.accumulated_value - mean
                 
 
     def leaf_normalize(self):
         leaf_correctness = [1 if leaf.correct_terminal_in_subtree > 0 else 0 for leaf in self.selected_terminals]
-        print(leaf_correctness)
+        print("leaf_correctness",leaf_correctness)
         _sum = sum(leaf_correctness)
         num = len(leaf_correctness) - 1
         mean = [(_sum - leaf_correctness[i]) / num for i in range(len(leaf_correctness))]
@@ -900,6 +934,7 @@ def convert_to_json(node: MCTSNode):
             "terminal_in_subtree": node.terminal_in_subtree,
             "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
             "accumulated_value": node.accumulated_value,
+            "visited_terminal": node.visited_terminal,
         }
     else:
         return {
@@ -917,6 +952,7 @@ def convert_to_json(node: MCTSNode):
             "terminal_in_subtree": node.terminal_in_subtree,
             "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
             "accumulated_value": node.accumulated_value,
+            "visited_terminal": node.visited_terminal,
         }
 
 
@@ -979,7 +1015,7 @@ def chain_worker(
             action = response if response is not None else ""
             token_action = response_token if response_token is not None else []
             
-            if (attempts != max_attempts) and len(response_token) < 1 and (not (stop_token is None)):
+            if (attempts != max_attempts) and len(response_token) < 1 and (not ((stop_token is None) or (stop_token in eos_tokens_set))):
                 continue  # 如果动作太短且没有结束标记，跳过
 
             paths.append({"answer": action, "token_answer": token_action})
@@ -1043,6 +1079,13 @@ def mcts_worker(
     try:
         mcts.run()
         root = mcts.root
+        print("mcts finished!")
+        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
+        with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
+            tree_json = convert_to_json(root)
+            # tree_json["time_used"] = time_used
+            json.dump(tree_json, f)
+            f.write("\n")
         paths = gather_paths(mcts.selected_terminals,args["path_num"])
         time_used = time.time() - start_time
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
@@ -1070,7 +1113,7 @@ def mcts_worker(
 
 
 def get_stops():
-    return ["<endoftext>","\n\n"]
+    return ["<|user|>", "<|endoftext|>", "<|observation|>","\n\n"]
 
 def path_from_root_to_node(node: MCTSNode) -> List[Dict[str, Any]]:
     path = []
@@ -1087,7 +1130,7 @@ def gather_paths(selected_terminals: list[MCTSNode], pass_k: int) -> List[List[D
     # 添加 selected_terminal 的叶子节点路径
     for terminal_node in selected_terminals:
         paths.append(path_from_root_to_node(terminal_node))
-    assert len(paths) == pass_k, f"Failed to generate {pass_k} paths"
+    assert len(paths) == pass_k, f"Failed to generate {pass_k} paths,{len(paths)} instead"
     return paths
 
 # 封装为一个函数,输入为item,输出为paths
