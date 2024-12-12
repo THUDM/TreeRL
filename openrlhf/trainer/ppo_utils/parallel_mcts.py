@@ -231,6 +231,7 @@ class MCTSNode(BaseModel):
     correct_terminal_in_subtree: int = 0
     accumulated_value: float = 0
     visited_terminal: int = 0
+    repeat:bool = False
 
     def add_child(self, child_node: MCTSNode):
         self.children.append(child_node)
@@ -308,6 +309,8 @@ class MCTSr(BaseModel):
     _childnum_lock: Optional[threading.Lock] = PrivateAttr(default=None)
     prompt_max_len:int = 1024
     leaves: List[int] = []
+    step_level_norm: bool = True
+    random_pick :bool = False
 
     # def __init__(self, temperature, top_p, model_name, stops=None):
     #     super().__init__()
@@ -318,11 +321,14 @@ class MCTSr(BaseModel):
 
     def self_evaluate(self, node: MCTSNode, is_terminated: bool):
         if is_terminated:
-            extracted_answer, result = check_result(
-                self.problem, node.answer, self.golden_answer,
-                # qwen_urls=qwen_urls,
-                urls=EVALUATOR_URLS)
-            reward = result
+            if node.repeat:
+                reward = 0
+            else:
+                extracted_answer, result = check_result(
+                    self.problem, node.answer, self.golden_answer,
+                    # qwen_urls=qwen_urls,
+                    urls=EVALUATOR_URLS)
+                reward = result
         else:
             # reward = generate_logits(
             #     urls=RM_URLS, user_query = self.problem, assistant_response = node.aggregate_answer,
@@ -435,7 +441,7 @@ class MCTSr(BaseModel):
         return selected_indices
 
 
-    def select_node(self, k=1):
+    def select_node(self, k=1,random_pick=False):
         """Select up to k non-fully expanded nodes with the highest UCT value.
 
         A node is fully expanded if either:
@@ -459,41 +465,45 @@ class MCTSr(BaseModel):
             return None
 
         selected_nodes = []
-
-        if self.selection_policy == SelectionPolicy.GREEDY:
-            selected_nodes = sorted(candidates, key=self.uct, reverse=True)[:k]
-        elif self.selection_policy == SelectionPolicy.IMPORTANCE_SAMPLING:
-            uct_scores = [self.uct(node) for node in candidates]
-            # 拷贝一份candidates，避免修改原列表
-            candis = candidates.copy()
-            selected_indices = self.weighted_sample_no_replacement(candis, uct_scores, k)
-            selected_nodes = [candidates[i] for i in selected_indices]
-        elif self.selection_policy == SelectionPolicy.PAIRWISE_IMPORTANCE_SAMPLING:
-            uct_scores = [self.uct(node) for node in candidates]
-            pairs = [
-                (i, j) for i in range(len(candidates)) for j in range(len(candidates))
-            ]
-            pair_weights = [
-                max(uct_scores[i], uct_scores[j]) -
-                min(uct_scores[i], uct_scores[j])
-                for i, j in pairs
-            ]
-            selected_pair_indices = random.choices(
-                range(len(pairs)), weights=pair_weights, k=min(k, len(pair_weights))
-            )
-            for pair_idx in selected_pair_indices:
-                selected_candidate_idx = max(
-                    pairs[pair_idx], key=lambda x: uct_scores[x]
-                )
-                if candidates[selected_candidate_idx] not in selected_nodes:
-                    selected_nodes.append(candidates[selected_candidate_idx])
-                if len(selected_nodes) >= k:
-                    break
+        if random_pick:
+            print("random pick")
+            selected_nodes = random.sample(candidates, min(k, len(candidates)))
+            return selected_nodes
         else:
-            raise ValueError(
-                f"Invalid selection policy: {self.selection_policy}")
+            if self.selection_policy == SelectionPolicy.GREEDY:
+                selected_nodes = sorted(candidates, key=self.uct, reverse=True)[:k]
+            elif self.selection_policy == SelectionPolicy.IMPORTANCE_SAMPLING:
+                uct_scores = [self.uct(node) for node in candidates]
+                # 拷贝一份candidates，避免修改原列表
+                candis = candidates.copy()
+                selected_indices = self.weighted_sample_no_replacement(candis, uct_scores, k)
+                selected_nodes = [candidates[i] for i in selected_indices]
+            elif self.selection_policy == SelectionPolicy.PAIRWISE_IMPORTANCE_SAMPLING:
+                uct_scores = [self.uct(node) for node in candidates]
+                pairs = [
+                    (i, j) for i in range(len(candidates)) for j in range(len(candidates))
+                ]
+                pair_weights = [
+                    max(uct_scores[i], uct_scores[j]) -
+                    min(uct_scores[i], uct_scores[j])
+                    for i, j in pairs
+                ]
+                selected_pair_indices = random.choices(
+                    range(len(pairs)), weights=pair_weights, k=min(k, len(pair_weights))
+                )
+                for pair_idx in selected_pair_indices:
+                    selected_candidate_idx = max(
+                        pairs[pair_idx], key=lambda x: uct_scores[x]
+                    )
+                    if candidates[selected_candidate_idx] not in selected_nodes:
+                        selected_nodes.append(candidates[selected_candidate_idx])
+                    if len(selected_nodes) >= k:
+                        break
+            else:
+                raise ValueError(
+                    f"Invalid selection policy: {self.selection_policy}")
 
-        return selected_nodes
+            return selected_nodes
 
     def initialize(self, add_understanding=False):
         """Generate a zero-shot answer."""
@@ -531,7 +541,7 @@ class MCTSr(BaseModel):
         start_time = time.time()
 
         while node_number < self.max_nodes and time.time() - start_time < self.max_time_use:
-            nodes = self.select_node(k=self.concurrent_num)
+            nodes = self.select_node(k=self.concurrent_num,random_pick=self.random_pick)
             if not nodes:
                 print("terminated because no node to expand")
                 break
@@ -649,15 +659,13 @@ class MCTSr(BaseModel):
                 finish_reason = finish_reason_list[0]
                 stop_token = stop_token_list[0]
 
-                if response is None or finish_reason != 'stop':
+                if response is None:
+                    print("response is None")
                     continue  # 如果响应为空或未结束，跳过
 
                 action = response
                 if not ((stop_token is None) or (stop_token in eos_tokens_set)):
                     action += stop_token
-
-                if len(response_token) < 1 and (not ((stop_token is None) or (stop_token in eos_tokens_set))):
-                    continue  # 如果动作太短且没有结束标记，跳过
 
                 new_action = action
                 new_action_token = response_token
@@ -667,10 +675,6 @@ class MCTSr(BaseModel):
                     child.answer
                     for child in children_map[node]
                 ]
-                # 检测到其他语言，跳过
-                if self.multi_language(new_action):
-                    # print("skipped because of multi language", new_action)
-                    continue
 
                 if any(
                     similarity(new_action, existing_action, split_chars=["\n\n", ". "])
@@ -684,18 +688,16 @@ class MCTSr(BaseModel):
                 new_aggregate_answer = node.aggregate_answer + new_action
                 new_aggregate_answer_token = node.aggregate_answer_token + new_action_token
                 all_children_token_num += token_num_list[0]  # 假设我们使用列表中的第一个标记数
-                if stop_token is None or stop_token in eos_tokens_set:
+
+                if (len(new_aggregate_answer_token) > self.max_token_num) or (find_repeated_patterns(new_aggregate_answer)):
+                    repeat = True
+                else:
+                    repeat = False
+
+                if (stop_token is None) or (stop_token in eos_tokens_set) or repeat:
                     if_finish = True
                 else:
                     if_finish = False
-                
-                if len(new_aggregate_answer_token) > self.max_token_num:
-                    child_max_children = 0
-                else:
-                    child_max_children = self.max_children
-            
-                if find_repeated_patterns(new_aggregate_answer):
-                    child_max_children = 0
 
                 finished = self.judge_finished(
                     if_finish, node.depth + 1
@@ -710,7 +712,8 @@ class MCTSr(BaseModel):
                     parent=node,
                     depth=node.depth + 1,
                     terminal=finished,
-                    max_children=child_max_children
+                    max_children=self.max_children,
+                    repeat=repeat
                 )
 
                 children_map[node].append(child_node)
@@ -723,26 +726,32 @@ class MCTSr(BaseModel):
         results = []
 
         for node, childrens in children_map.items():
-            non_leaf_rewards = []
-            non_leaf_indexes = []
-            for i, child in enumerate(childrens):
-                if child.terminal:
-                    child.R = self.self_evaluate(child, True)
-                    child.value = child.R
-                else:
-                    reward = self.self_evaluate(child, False)
-                    non_leaf_rewards.append(reward)
-                    non_leaf_indexes.append(i)
+            if self.random_pick:
+                for i, child in enumerate(childrens):
+                    if child.terminal:
+                        child.R = self.self_evaluate(child, True)
+                        child.value = child.R
+            else:
+                non_leaf_rewards = []
+                non_leaf_indexes = []
+                for i, child in enumerate(childrens):
+                    if child.terminal:
+                        child.R = self.self_evaluate(child, True)
+                        child.value = child.R
+                    else:
+                        reward = self.self_evaluate(child, False)
+                        non_leaf_rewards.append(reward)
+                        non_leaf_indexes.append(i)
 
-            if non_leaf_rewards:
-                non_leaf_rewards = np.array(non_leaf_rewards)
-                normalized_rewards = (non_leaf_rewards - np.mean(non_leaf_rewards)) / (np.std(non_leaf_rewards) + 1e-8)
-                # # 归一化到（0，1）之间
-                # normalized_rewards = normalized_rewards/2 + 0.5
+                if non_leaf_rewards:
+                    non_leaf_rewards = np.array(non_leaf_rewards)
+                    normalized_rewards = (non_leaf_rewards - np.mean(non_leaf_rewards)) / (np.std(non_leaf_rewards) + 1e-8)
+                    # # 归一化到（0，1）之间
+                    # normalized_rewards = normalized_rewards/2 + 0.5
 
-                for i, reward in zip(non_leaf_indexes, normalized_rewards):
-                    childrens[i].R = reward
-                    childrens[i].value = reward
+                    for i, reward in zip(non_leaf_indexes, normalized_rewards):
+                        childrens[i].R = reward
+                        childrens[i].value = reward
 
             node.max_children = len(childrens)
             node.children = childrens
@@ -782,18 +791,33 @@ class MCTSr(BaseModel):
             to_consider.extend(current_node.children)
 
         print("all_step value",[node.accumulated_value for node in all_steps],len(all_steps))
-        step_sum = 0
-        step_num = 0
-        for node in all_steps:
-            step_sum += node.accumulated_value*node.terminal_in_subtree
-            step_num += node.terminal_in_subtree
-        if step_num == 0:
-            mean = 0
+        if self.step_level_norm:
+            step_sum = 0
+            step_num = 0
+            for node in all_steps:
+                step_sum += node.accumulated_value*node.terminal_in_subtree
+                step_num += node.terminal_in_subtree
+            if step_num == 0:
+                mean = 0
+            else:
+                mean = step_sum/step_num
+            print("mean:", mean,step_sum,step_num)
+            for node in all_steps:
+                node.accumulated_value = node.accumulated_value - mean
         else:
-            mean = step_sum/step_num
-        print("mean:", mean,step_sum,step_num)
-        for node in all_steps:
-            node.accumulated_value = node.accumulated_value - mean
+            print("token level normalization")
+            step_sum = 0
+            step_num = 0
+            for node in all_steps:
+                step_sum += node.accumulated_value*node.terminal_in_subtree*len(node.answer_token)
+                step_num += node.terminal_in_subtree*len(node.answer_token)
+            if step_num == 0:
+                mean = 0
+            else:
+                mean = step_sum/step_num
+            print("mean:", mean)
+            for node in all_steps:
+                node.accumulated_value = node.accumulated_value - mean
                 
 
     def leaf_normalize(self):
@@ -1009,14 +1033,11 @@ def chain_worker(
             finish_reason = finish_reason_list[0]
             stop_token = stop_token_list[0]
 
-            if (attempts != max_attempts) and (response is None or finish_reason != 'stop'):
+            if (attempts != max_attempts) and (response is None):
                 continue  # 如果响应为空或未结束，跳过
 
             action = response if response is not None else ""
             token_action = response_token if response_token is not None else []
-            
-            if (attempts != max_attempts) and len(response_token) < 1 and (not ((stop_token is None) or (stop_token in eos_tokens_set))):
-                continue  # 如果动作太短且没有结束标记，跳过
 
             paths.append({"answer": action, "token_answer": token_action})
             if len(paths) >= pass_k:
@@ -1073,24 +1094,27 @@ def mcts_worker(
         prompt_max_len = args["prompt_max_len"],
         max_token_num = args["max_token_num"],
         max_time_use = args["max_time_use"],
+        step_level_norm = args["step_level_norm"],
+        random_pick = args["random_pick"]
     )
     # print(mcts.max_children)
     start_time = time.time()
     try:
         mcts.run()
         root = mcts.root
-        print("mcts finished!")
         # with open("/workspace/lurui/openrlhf-glm/logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
-        with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
-            tree_json = convert_to_json(root)
-            # tree_json["time_used"] = time_used
-            json.dump(tree_json, f)
-            f.write("\n")
+        # # with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
+        #     tree_json = convert_to_json(root)
+        #     tree_json["random_pick"] = args["random_pick"]
+        #     # tree_json["time_used"] = time_used
+        #     json.dump(tree_json, f)
+        #     f.write("\n")
         paths = gather_paths(mcts.selected_terminals,args["path_num"])
         time_used = time.time() - start_time
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
         # with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
             tree_json = convert_to_json(root)
+            tree_json["random_pick"] = args["random_pick"]
             tree_json["time_used"] = time_used
             json.dump(tree_json, f)
             f.write("\n")

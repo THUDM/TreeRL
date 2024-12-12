@@ -3245,7 +3245,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         assert prompts[2] is not None, f"labels is None, prompts: {prompts}"
 
         # args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 512, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 32, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024}
-        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360}
+        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360,"step_level_norm":False,"random_pick":True}
 
 
         paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, args)
@@ -3323,7 +3323,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         item = {"problem": prompts[0], "golden_answer": prompts[2]}
         assert prompts[2] is not None, f"labels is None, prompts: {prompts}"
 
-        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360}
+        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360,"step_level_norm":False,"random_pick":True}
         
         paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, args)
         assert paths is not None, f"paths is None, prompts: {prompts}"
@@ -3417,7 +3417,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         item = {"problem": prompts[0], "golden_answer": prompts[2]}
         assert prompts[2] is not None, f"labels is None, prompts: {prompts}"
 
-        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360}
+        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360,"step_level_norm":False,"random_pick":True}
         
         paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, args)
         assert paths is not None, f"paths is None, prompts: {prompts}"

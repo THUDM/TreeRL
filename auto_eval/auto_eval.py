@@ -89,10 +89,11 @@ def wait_for_model_ready(api_url, initial_wait=40, check_interval=30, max_retrie
 def check_result_exists(result_dir, model_name):
     """检查是否已有评测结果"""
     # result_path = Path(result_dir) / f"livecodebench_{model_name}" / "results.json"
-    result_path = Path(result_dir) / f"{model_name}/simple_evals/omni-math.json"
+    result_path1 = Path(result_dir) / f"{model_name}/simple_evals/omni-math.json"
+    result_path2 = Path(result_dir) / f"{model_name}/simple_evals/math500.json"
     # print(f"Checking for existing result: {result_path}")
     # exit(1)
-    return result_path.exists()
+    return result_path1.exists() and result_path2.exists()
 
 
 def run_script_non_blocking(cmd):
@@ -139,7 +140,7 @@ def cleanup_previous_services():
         cmd = "pkill -f -9 'import spawn_main'"
         subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
-        time.sleep(30)  # 等待进程完全终止
+        time.sleep(10)  # 等待进程完全终止
     except:
         pass
 
