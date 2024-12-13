@@ -14,7 +14,7 @@ set -x
 NUM_TRACE=16
 KL=0.0001
 
-TAG=RLOO-glm9b-model-ms${NUM_TRACE}-kl-${KL}-math-mcts
+TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-chain
 SAVE_DIR=/workspace/lurui/openrlhf-glm/checkpoints/reinforce/$TAG
 mkdir -p $SAVE_DIR
 
@@ -46,10 +46,10 @@ ray job submit --address="http://127.0.0.1:8265" \
     --reward_num_gpus_per_node 8 \
     --actor_num_nodes 2 \
     --actor_num_gpus_per_node 8 \
-    --vllm_num_engines 16 \
+    --vllm_num_engines 8 \
     --vllm_tensor_parallel_size 1 \
-    --pretrain /data/o1-cloud/checkpoints/sft/glm_9b_1102 \
-    --reward_pretrain /data/o1-cloud/checkpoints/sft/glm_9b_1102 \
+    --pretrain /workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381 \
+    --reward_pretrain /workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381 \
     --save_path $SAVE_DIR \
     --ckpt_path $SAVE_DIR \
     --micro_train_batch_size 1 \
@@ -60,7 +60,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --rollout_batch_size 16 \
     --num_episodes 2 \
     --prompt_max_len 1024 \
-    --generate_max_len 4096 \
+    --generate_max_len 8192 \
     --zero_stage 2 \
     --bf16 \
     --actor_learning_rate 1.5e-6 \
@@ -87,9 +87,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --remote_rm_url /workspace/lurui/openrlhf-glm/examples/tools/rm_urls.json \
     --normalize_reward_from_multi_traces_with_rloo \
     --wandb_project openrlhf_code_rl \
-    --use_general_reward_for_stem \
-    --use_mcts \
-    --process_supervision \
+    # --use_general_reward_for_stem \
     # --use_rule_based_reward \
     # --mask_repeated_samples \
     # --random_temperature \
