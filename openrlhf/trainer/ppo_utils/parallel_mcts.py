@@ -311,6 +311,7 @@ class MCTSr(BaseModel):
     leaves: List[int] = []
     step_level_norm: bool = True
     random_pick :bool = False
+    parent_shift: bool = False
 
     # def __init__(self, temperature, top_p, model_name, stops=None):
     #     super().__init__()
@@ -589,15 +590,19 @@ class MCTSr(BaseModel):
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/leaves.jsonl", "a") as f:
             #输出len(self.leaves)数量即可
             f.write(json.dumps({"leaf num": len(self.leaves)}))
-
         
-        self.select_terminal()
+        if self.parent_shift:
+            for leaf in self.leaves:
+                self.leaf_backpropagate(leaf)
+            self.select_terminal()
+        else:
+            self.select_terminal()
 
-        for leaf in self.selected_terminals:
-            self.leaf_backpropagate(leaf)
+            for leaf in self.selected_terminals:
+                self.leaf_backpropagate(leaf)
 
-        if len(self.selected_terminals) > 1:
-            self.leaf_normalize()
+            if len(self.selected_terminals) > 1:
+                self.leaf_normalize()
     
     def multi_language(self,text):
         """检查是否包含非英语内容（中文、日文、韩文、俄语）"""
@@ -830,13 +835,107 @@ class MCTSr(BaseModel):
             leaf.accumulated_value = leaf.correct_terminal_in_subtree/leaf.terminal_in_subtree - mean[i]
         self.normalize_backprop()
 
+    # def select_terminal(self):
+    #     # 从self.leaves中选择self.path_num 个叶子节点, 尽可能挑选同样数量的正确和错误的叶子，同一个父亲的叶子如果同对同错，只能选一个
+    #     parent_to_children = {}
+        
+    #     # 分类出正确和错误的叶子节点
+    #     correct_leaves = []
+    #     incorrect_leaves = []
+
+    #     if len(self.leaves) < 3:
+    #         return False
+        
+    #     for leaf in self.leaves:
+    #         parent = leaf.parent
+    #         if parent not in parent_to_children.keys():
+    #             parent_to_children[parent] = {'correct': [], 'incorrect': []}
+                    
+    #         if leaf.main_chain > 0:
+    #             parent_to_children[parent]['correct'].append(leaf)
+    #             correct_leaves.append(leaf)
+    #         else:
+    #             parent_to_children[parent]['incorrect'].append(leaf)
+    #             incorrect_leaves.append(leaf)
+        
+    #     total_sum = sum([2 if (len(children["correct"]) and len(children["incorrect"])) else 1 for children in parent_to_children.values()])
+
+    #     if total_sum == self.path_num:
+    #         selected_terminals = []
+    #         # 为每个父节点选择一个正确的孩子和一个错误的孩子（如果有的话）
+    #         for parent, children in parent_to_children.items():
+    #             if children['correct']:
+    #                 selected_terminals.append(random.choice(children['correct']))
+    #             if children['incorrect']:
+    #                 selected_terminals.append(random.choice(children['incorrect']))
+    #         self.selected_terminals = selected_terminals
+    #         return True
+
+    #     elif total_sum > self.path_num:
+    #         selected_terminals_correct = []
+    #         selected_terminals_incorrect = []
+
+    #         # 为每个父节点选择一个正确的孩子和一个错误的孩子（如果有的话）
+    #         for parent, children in parent_to_children.items():
+    #             if children['correct']:
+    #                 selected_terminals_correct.append(random.choice(children['correct']))
+    #             if children['incorrect']:
+    #                 selected_terminals_incorrect.append(random.choice(children['incorrect']))
+    #         if len(selected_terminals_correct) <= self.path_num/2:
+    #             num_correct = len(selected_terminals_correct)
+    #             num_incorrect = self.path_num - num_correct
+    #         elif len(selected_terminals_incorrect) <= self.path_num/2:
+    #             num_incorrect = len(selected_terminals_incorrect)
+    #             num_correct = self.path_num - num_incorrect
+    #         else:
+    #             num_correct = self.path_num//2
+    #             num_incorrect = self.path_num - num_correct
+            
+    #         selected_terminals = random.sample(selected_terminals_correct, num_correct) + random.sample(selected_terminals_incorrect, num_incorrect)
+    #         self.selected_terminals = selected_terminals
+    #         return True
+            
+    #     else:
+    #         selected_terminals = []
+    #         # 为每个父节点选择一个正确的孩子和一个错误的孩子（如果有的话）
+    #         for parent, children in parent_to_children.items():
+    #             if children['correct']:
+    #                 selected_terminals.append(random.choice(children['correct']))
+    #                 children['correct'].remove(selected_terminals[-1])
+    #             if children['incorrect']:
+    #                 selected_terminals.append(random.choice(children['incorrect']))
+    #                 children['incorrect'].remove(selected_terminals[-1])
+    #         if len(selected_terminals) < self.path_num:
+    #             k = 0
+    #             while len(selected_terminals) < self.path_num:
+    #                 added_in_this_round = False
+    #                 for parent, children in parent_to_children.items():
+    #                     if k < len(children['correct']):
+    #                         selected_terminals.append(children['correct'][k])
+    #                         added_in_this_round = True
+    #                         if len(selected_terminals) >= self.path_num:
+    #                             break
+    #                     elif k < len(children['incorrect']):
+    #                         selected_terminals.append(children['incorrect'][k])
+    #                         added_in_this_round = True
+    #                         if len(selected_terminals) >= self.path_num:
+    #                             break
+    #                 if not added_in_this_round:
+    #                     break  # 如果这一轮没有添加新路径，则不能继续补全
+    #                 k += 1
+    #         while len(selected_terminals) < self.path_num:
+    #             assert len(selected_terminals) > 0, "Not enough terminal nodes"
+    #             for node in selected_terminals:
+    #                 selected_terminals.append(node)
+    #                 if len(selected_terminals) >= self.path_num:
+    #                     break
+    #         self.selected_terminals = selected_terminals
+    #         return True
+
     def select_terminal(self):
+        print("new select_terminal")
         # 从self.leaves中选择self.path_num 个叶子节点, 尽可能挑选同样数量的正确和错误的叶子，同一个父亲的叶子如果同对同错，只能选一个
         parent_to_children = {}
-        
-        # 分类出正确和错误的叶子节点
-        correct_leaves = []
-        incorrect_leaves = []
 
         if len(self.leaves) < 3:
             return False
@@ -844,49 +943,25 @@ class MCTSr(BaseModel):
         for leaf in self.leaves:
             parent = leaf.parent
             if parent not in parent_to_children.keys():
-                parent_to_children[parent] = {'correct': [], 'incorrect': []}
-                    
-            if leaf.main_chain > 0:
-                parent_to_children[parent]['correct'].append(leaf)
-                correct_leaves.append(leaf)
-            else:
-                parent_to_children[parent]['incorrect'].append(leaf)
-                incorrect_leaves.append(leaf)
+                parent_to_children[parent] = []
+            parent_to_children[parent].append(leaf)
         
-        total_sum = sum([2 if (len(children["correct"]) and len(children["incorrect"])) else 1 for children in parent_to_children.values()])
+        total_sum = len(parent_to_children.keys())
 
         if total_sum == self.path_num:
             selected_terminals = []
-            # 为每个父节点选择一个正确的孩子和一个错误的孩子（如果有的话）
+            # 为每个父节点选择一个孩子
             for parent, children in parent_to_children.items():
-                if children['correct']:
-                    selected_terminals.append(random.choice(children['correct']))
-                if children['incorrect']:
-                    selected_terminals.append(random.choice(children['incorrect']))
+                selected_terminals.append(random.choice(children))
             self.selected_terminals = selected_terminals
             return True
 
         elif total_sum > self.path_num:
-            selected_terminals_correct = []
-            selected_terminals_incorrect = []
-
-            # 为每个父节点选择一个正确的孩子和一个错误的孩子（如果有的话）
-            for parent, children in parent_to_children.items():
-                if children['correct']:
-                    selected_terminals_correct.append(random.choice(children['correct']))
-                if children['incorrect']:
-                    selected_terminals_incorrect.append(random.choice(children['incorrect']))
-            if len(selected_terminals_correct) <= self.path_num/2:
-                num_correct = len(selected_terminals_correct)
-                num_incorrect = self.path_num - num_correct
-            elif len(selected_terminals_incorrect) <= self.path_num/2:
-                num_incorrect = len(selected_terminals_incorrect)
-                num_correct = self.path_num - num_incorrect
-            else:
-                num_correct = self.path_num//2
-                num_incorrect = self.path_num - num_correct
-            
-            selected_terminals = random.sample(selected_terminals_correct, num_correct) + random.sample(selected_terminals_incorrect, num_incorrect)
+            # 首先随机选self.path_num个父节点
+            selected_parents = random.sample(parent_to_children.keys(), self.path_num)
+            selected_terminals = []
+            for parent in selected_parents:
+                selected_terminals.append(random.choice(parent_to_children[parent]))
             self.selected_terminals = selected_terminals
             return True
             
@@ -894,32 +969,24 @@ class MCTSr(BaseModel):
             selected_terminals = []
             # 为每个父节点选择一个正确的孩子和一个错误的孩子（如果有的话）
             for parent, children in parent_to_children.items():
-                if children['correct']:
-                    selected_terminals.append(random.choice(children['correct']))
-                    children['correct'].remove(selected_terminals[-1])
-                if children['incorrect']:
-                    selected_terminals.append(random.choice(children['incorrect']))
-                    children['incorrect'].remove(selected_terminals[-1])
+                selected_terminals.append(random.choice(children))
             if len(selected_terminals) < self.path_num:
                 k = 0
                 while len(selected_terminals) < self.path_num:
                     added_in_this_round = False
                     for parent, children in parent_to_children.items():
-                        if k < len(children['correct']):
-                            selected_terminals.append(children['correct'][k])
+                        if k < len(children) and children[k] not in selected_terminals:
+                            selected_terminals.append(children[k])
                             added_in_this_round = True
                             if len(selected_terminals) >= self.path_num:
-                                break
-                        elif k < len(children['incorrect']):
-                            selected_terminals.append(children['incorrect'][k])
-                            added_in_this_round = True
-                            if len(selected_terminals) >= self.path_num:
-                                break
+                                break     
                     if not added_in_this_round:
                         break  # 如果这一轮没有添加新路径，则不能继续补全
                     k += 1
             while len(selected_terminals) < self.path_num:
                 assert len(selected_terminals) > 0, "Not enough terminal nodes"
+                # 把selected_terminals shuffle一下，然后再从头开始添加
+                selected_terminals = random.shuffle(selected_terminals)
                 for node in selected_terminals:
                     selected_terminals.append(node)
                     if len(selected_terminals) >= self.path_num:
@@ -1095,7 +1162,8 @@ def mcts_worker(
         max_token_num = args["max_token_num"],
         max_time_use = args["max_time_use"],
         step_level_norm = args["step_level_norm"],
-        random_pick = args["random_pick"]
+        random_pick = args["random_pick"],
+        parent_shift = args["parent_shift"]
     )
     # print(mcts.max_children)
     start_time = time.time()
@@ -1109,7 +1177,8 @@ def mcts_worker(
         #     # tree_json["time_used"] = time_used
         #     json.dump(tree_json, f)
         #     f.write("\n")
-        paths = gather_paths(mcts.selected_terminals,args["path_num"])
+        # print("selected_terminals",mcts.selected_terminals[0])
+        paths = gather_paths(mcts.selected_terminals,args["path_num"],mcts.parent_shift)
         time_used = time.time() - start_time
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
         # with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
@@ -1133,27 +1202,34 @@ def mcts_worker(
             f.write("use mcts_worker\n")
         return paths,root.state
 
-    
-
-
 def get_stops():
     return ["<|user|>", "<|endoftext|>", "<|observation|>","\n\n"]
 
-def path_from_root_to_node(node: MCTSNode) -> List[Dict[str, Any]]:
-    path = []
-    while node is not None:
-        print("pass_ratio",node.correct_terminal_in_subtree,node.terminal_in_subtree,node.accumulated_value)
-        path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":node.accumulated_value})
-        node = node.parent
-    return path[::-1][1:]
+def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dict[str, Any]]:
+    if parent_shift:
+        print(" use parent shift")
+        path = []
+        while node.parent is not None:
+            print("pass_ratio",node.correct_terminal_in_subtree/node.terminal_in_subtree ,node.parent.correct_terminal_in_subtree/node.parent.terminal_in_subtree)
+            path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":node.correct_terminal_in_subtree/node.terminal_in_subtree - node.parent.correct_terminal_in_subtree/node.parent.terminal_in_subtree})
+            node = node.parent
+        return path[::-1]
+    else:
+        print("not use parent shift")
+        path = []
+        while node is not None:
+            print("pass_ratio",node.correct_terminal_in_subtree,node.terminal_in_subtree,node.accumulated_value)
+            path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":node.accumulated_value})
+            node = node.parent
+        return path[::-1][1:]
 
-def gather_paths(selected_terminals: list[MCTSNode], pass_k: int) -> List[List[Dict[str, Any]]]:
+def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False) -> List[List[Dict[str, Any]]]:
     paths = []
     if len(selected_terminals) < pass_k:
         return None
     # 添加 selected_terminal 的叶子节点路径
     for terminal_node in selected_terminals:
-        paths.append(path_from_root_to_node(terminal_node))
+        paths.append(path_from_root_to_node(terminal_node,parent_shift))
     assert len(paths) == pass_k, f"Failed to generate {pass_k} paths,{len(paths)} instead"
     return paths
 

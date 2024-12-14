@@ -217,6 +217,13 @@ if __name__ == "__main__":
     parser.add_argument("--top_p", type=float, default=1.0)
     parser.add_argument("--min_p", type=float, default=0)
     parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--max_nodes", type=int, default=256)
+    parser.add_argument("--max_node_per_depth", type=float, default=18)
+    parser.add_argument("--max_time_use", type=float, default=360)
+    parser.add_argument("--step_level_norm", action="store_true", default=False)
+    parser.add_argument("--random_pick", action="store_true", default=False)
+    parser.add_argument("--parent_shift", action="store_true", default=False)
+
     parser.add_argument("--seed", type=int, default=42)
 
     parser.add_argument("--local_rank", type=int, default=-1, help="local_rank for deepspeed")

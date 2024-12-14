@@ -1,4 +1,3 @@
-      
 set -x 
 # export PATH=$HOME/.local/bin/:$PATH
 
@@ -12,10 +11,10 @@ set -x
 
 # ray start --head --node-ip-address 0.0.0.0 --num-gpus 8
 
-NUM_TRACE=16
+NUM_TRACE=32
 KL=0.0001
 
-TAG=RLOO-9B-sft-model-ms${NUM_TRACE}-golden-kl-${KL}-mathtrain30k-mcts-norm-inreward-vinevalue-tokenlevel-tree-normalized
+TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-advantage
 SAVE_DIR=/workspace/lurui/openrlhf-glm/checkpoints/reinforce/$TAG
 mkdir -p $SAVE_DIR
 
@@ -28,14 +27,14 @@ mkdir -p $SAVE_DIR
 # "
 
 DATASETS="
-    /workspace/lurui/openrlhf-glm/openrlhf/datasets/train_30k.jsonl,1
+    /workspace/lurui/openrlhf-glm-data/train_30k.jsonl,1
 "
 
 ray job submit --address="http://127.0.0.1:8265" \
     --runtime-env-json='{
         "working_dir": "/workspace/lurui/openrlhf-glm",
         "pip": "/workspace/lurui/openrlhf-glm/requirements.txt",
-        "excludes": ["*.ipynb", "tests", "log", "logs", "wandb", "checkpoints","reward","datasets"],
+        "excludes": ["*.ipynb", "tests", "log", "logs", "wandb", "checkpoints","reward",".git"],
         "env_vars": {
             "NCCL_TIMEOUT_MS": "3600000"
         }
@@ -47,10 +46,10 @@ ray job submit --address="http://127.0.0.1:8265" \
     --reward_num_gpus_per_node 8 \
     --actor_num_nodes 2 \
     --actor_num_gpus_per_node 8 \
-    --vllm_num_engines 8 \
+    --vllm_num_engines 16 \
     --vllm_tensor_parallel_size 1 \
-    --pretrain /data/o1-cloud/checkpoints/sft/glm_9b_1102 \
-    --reward_pretrain /data/o1-cloud/checkpoints/sft/glm_9b_1102 \
+    --pretrain /workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381 \
+    --reward_pretrain /workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381 \
     --save_path $SAVE_DIR \
     --ckpt_path $SAVE_DIR \
     --micro_train_batch_size 1 \
@@ -64,7 +63,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --generate_max_len 4096 \
     --zero_stage 2 \
     --bf16 \
-    --actor_learning_rate 2e-6 \
+    --actor_learning_rate 1.5e-6 \
     --lr_scheduler_type cosine \
     --min_actor_learning_rate_lr 1 \
     --l2 0.1 \
@@ -88,14 +87,15 @@ ray job submit --address="http://127.0.0.1:8265" \
     --remote_rm_url /workspace/lurui/openrlhf-glm/examples/tools/rm_urls.json \
     --normalize_reward_from_multi_traces_with_rloo \
     --wandb_project openrlhf_code_rl \
-    --use_general_reward_for_stem \
     --use_mcts \
-    --use_vinevalue \
-    --lambd 1 \
-    --max_nodes 256 \
-    --max_node_per_depth 18 \
-    --max_time_use 360 \
+    --process_supervision \
+    --mask_repeated_samples \
+    --max_nodes 512 \
+    --max_node_per_depth 32\
+    --max_time_use 480 \
     --random_pick \
+    --parent_shift \
+    # --use_general_reward_for_stem \
     # --use_rule_based_reward \
     # --mask_repeated_samples \
     # --random_temperature \

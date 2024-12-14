@@ -90,6 +90,10 @@ ray job submit --address="http://127.0.0.1:8265" \
     --use_mcts \
     --process_supervision \
     --mask_repeated_samples \
+    --max_nodes 256 \
+    --max_node_per_depth 18 \
+    --max_time_use 360 \
+    --random_pick \
     # --use_general_reward_for_stem \
     # --use_rule_based_reward \
     # --mask_repeated_samples \
