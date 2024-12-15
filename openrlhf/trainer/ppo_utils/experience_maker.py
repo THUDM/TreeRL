@@ -179,7 +179,7 @@ def normalize_reward_from_multi_traces_rloo(
             reward_mask = reward_mask.float()
             reward = reward * reward_mask
         reward = reward.view(-1)
-
+    print("reward after normalize",reward)
     return reward
     
     # reward = reward.view(batch_size, num_trace_per_sample)
@@ -2115,6 +2115,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 pass_rate = ((judge_rwd > margin).sum(1) > 0).float()
                 pass_rate = pass_rate.repeat(batch_size * num_trace_per_sample)[:batch_size * num_trace_per_sample]
                 pass_rate = pass_rate.to(action_log_probs.device)
+                pass_at_1 = (judge_rwd > margin).float().sum(1) / judge_rwd.shape[1]
+                pass_at_1 = pass_at_1.repeat(batch_size * num_trace_per_sample)[:batch_size * num_trace_per_sample]
 
                 if self.strategy.args.mask_pass_confident_samples:
                     sample_pass_rate = (judge_rwd > margin).float().sum(1) / judge_rwd.shape[1]
@@ -2124,6 +2126,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         else:
             pass_rate = torch.zeros(action_log_probs.shape[0], device=device)
         # print("value:",value.shape,value)
+        # print("pass_rate shape:",pass_rate.shape,"pass_at_1 shape:",pass_at_1.shape)
+        assert pass_rate.shape == pass_at_1.shape, f"pass_rate_shape: {pass_rate.shape} != pass_at_1_shape: {pass_at_1.shape}"
 
         return {
             "action_mask": action_mask,
@@ -2139,6 +2143,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             "wait_time": _wait_time,
             "rollout_time": rollout_time,
             "pass_rate": pass_rate,
+            "pass_at_1": pass_at_1,
             "overlong_mask": overlong_mask
         }
     
