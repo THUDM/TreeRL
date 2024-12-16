@@ -333,6 +333,7 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
                 # "response_overlong_ratio": (action_mask[:, -1] == 0).float(),
                 "response_overlong_ratio": overlong_mask.float(),
                 "pass_rate": experiences["pass_rate"] if "pass_rate" in experiences else 0,
+                "pass_at_1": experiences["pass_at_1"] if "pass_at_1" in experiences else 0,
                 "response_entropy": response_entropy,
             }
 

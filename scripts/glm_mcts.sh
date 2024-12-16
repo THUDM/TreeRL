@@ -46,7 +46,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --reward_num_gpus_per_node 8 \
     --actor_num_nodes 2 \
     --actor_num_gpus_per_node 8 \
-    --vllm_num_engines 8 \
+    --vllm_num_engines 16 \
     --vllm_tensor_parallel_size 1 \
     --pretrain /data/o1-cloud/checkpoints/sft/glm_9b_1102 \
     --reward_pretrain /data/o1-cloud/checkpoints/sft/glm_9b_1102 \
@@ -90,6 +90,10 @@ ray job submit --address="http://127.0.0.1:8265" \
     --use_general_reward_for_stem \
     --use_mcts \
     --process_supervision \
+    --max_nodes 256 \
+    --max_node_per_depth 18 \
+    --max_time_use 360 \
+    --random_pick \
     # --use_rule_based_reward \
     # --mask_repeated_samples \
     # --random_temperature \

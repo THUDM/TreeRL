@@ -11,7 +11,8 @@ from openrlhf.utils.utils import (
     query_chatglm_platform,
     query_chatglm_tgi,
     query_vllm_platform,
-    check_result
+    check_result,
+    get_qwen_remote_reward_model_value,
 )
 
 
@@ -126,49 +127,49 @@ def _remote_binary_judge_evaluation(urls, queries, labels):
 ### consider reward models 
 ##################
 
-def apply_chat_template_qwen(system_prompt, user, assistant):
-    return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>\n"
+# def apply_chat_template_qwen(system_prompt, user, assistant):
+#     return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>\n"
 
 
-def get_qwen_remote_reward_model_value(urls, item):
-    url = random.choice(urls)
-    if len(item) == 3:
-        question, response, _ = item
-    else:
-        question, response = item
+# def get_qwen_remote_reward_model_value(urls, item):
+#     url = random.choice(urls)
+#     if len(item) == 3:
+#         question, response, _ = item
+#     else:
+#         question, response = item
     
-    client = OpenAI(
-        api_key="EMPTY",
-        base_url=url,
-    )
+#     client = OpenAI(
+#         api_key="EMPTY",
+#         base_url=url,
+#     )
     
-    system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
-    if len(question) + len(response) > 4096:
-        response = response[:4096 - len(question)]
+#     system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
+#     if len(question) + len(response) > 4096:
+#         response = response[:4096 - len(question)]
         
-    conversation_str = apply_chat_template_qwen(system_prompt, question, response)
+#     conversation_str = apply_chat_template_qwen(system_prompt, question, response)
 
-    for _ in range(3):
-        try:
-            responses = client.embeddings.create(
-                input=[conversation_str],
-                model="Qwen2.5-Math-RM-72B",
-            )
+#     for _ in range(3):
+#         try:
+#             responses = client.embeddings.create(
+#                 input=[conversation_str],
+#                 model="Qwen2.5-Math-RM-72B",
+#             )
     
-            # models = client.models.list()
-            # model = models.data[0].id
+#             # models = client.models.list()
+#             # model = models.data[0].id
 
-            # responses = client.embeddings.create(
-            #     input=[conversation_str],
-            #     model=model,
-            # )
-            for data in responses.data:
-                return float(data.embedding[-1])
-        except:
-            # print(e)
-            print("-- error in rm requests")
-            continue
-    return -10
+#             # responses = client.embeddings.create(
+#             #     input=[conversation_str],
+#             #     model=model,
+#             # )
+#             for data in responses.data:
+#                 return float(data.embedding[-1])
+#         except:
+#             # print(e)
+#             print("-- error in rm requests")
+#             continue
+#     return -10
 
 
 def get_remote_reward_model_value_tgi(urls, item):
@@ -291,18 +292,23 @@ def get_stem_eval(
     binary_reward = raw_remote_reward
     assert binary_reward in (0, 1), f"binary_reward={binary_reward}"
     if use_general_reward_for_reason:
+        # 附加一个，原本实现
+        # remote_model_urls = remote_urls["math_RM"]
+        # # _remote_model_rm_urls = load_reward_url(self.remote_reward_url[1])
+        # # rm_based_reward = _remote_reward_model_evaluation(remote_model_urls, (query, response))
+        # _rm_based_reward = get_general_chat_eval(query, response, remote_model_urls, tokenizer=tokenizer)
+        # # close sigmoid
+        # # rm_based_reward = _rm_based_reward
+        # rm_based_reward = 1 / (1 + math.exp(-_rm_based_reward))
+        # coeff = 0.3
+        # raw_remote_reward = raw_remote_reward + coeff * rm_based_reward
+        # print(f"stem_remote_reward={_rm_based_reward}")
+
+        ## 新实现：只用rm
         remote_model_urls = remote_urls["math_RM"]
-        # _remote_model_rm_urls = load_reward_url(self.remote_reward_url[1])
-        # rm_based_reward = _remote_reward_model_evaluation(remote_model_urls, (query, response))
-        _rm_based_reward = get_general_chat_eval(query, response, remote_model_urls, tokenizer=tokenizer)
-        # close sigmoid
-        # rm_based_reward = _rm_based_reward
-        rm_based_reward = 1 / (1 + math.exp(-_rm_based_reward))
-        coeff = 0.3
-        raw_remote_reward = raw_remote_reward + coeff * rm_based_reward
-        print(f"stem_remote_reward={_rm_based_reward}")
-        # Length encourage
-        # raw_remote_reward = len(tokenizer.encode(response, add_special_tokens=False)) / 8192 * 0.1
+        _rm_based_reward = get_qwen_remote_reward_model_value(remote_model_urls, query, response)
+        raw_remote_reward = _rm_based_reward
+        # print(f"stem_remote_reward={_rm_based_reward}")
 
     if use_rule_based_reward and not is_overlong:
         if binary_reward == 0:
@@ -408,6 +414,7 @@ def get_remote_reward_entry(
     results = [x[1] for  x in results]
     
     results = torch.tensor(results).float()
+    print("reward returned:",results)
 
     return extracted_answers, results, binary_results
 

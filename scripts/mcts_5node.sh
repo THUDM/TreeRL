@@ -93,6 +93,10 @@ ray job submit --address="http://127.0.0.1:8265" \
     --process_supervision \
     --mask_repeated_samples \
     --enable_prefix_caching \
+    --max_nodes 256 \
+    --max_node_per_depth 18 \
+    --max_time_use 360 \
+    --random_pick \
     # --use_rule_based_reward \
     # --random_temperature \
     # --use_rule_based_reward \

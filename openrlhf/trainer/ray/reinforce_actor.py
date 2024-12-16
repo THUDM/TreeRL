@@ -341,6 +341,12 @@ class ActorModelRayActor(BasePPORole):
             tokenizer_reward=self.tokenizer_reward,
             use_mcts = args.use_mcts,
             use_vinevalue = args.use_vinevalue,
+            max_nodes = args.max_nodes,
+            max_node_per_depth = args.max_node_per_depth,
+            max_time_use = args.max_time_use,
+            step_level_norm = args.step_level_norm,
+            random_pick = args.random_pick,
+            parent_shift = args.parent_shift
         )
 
         trainer.fit(self.prompts_dataloader, self.pretrain_dataloader, args)

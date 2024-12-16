@@ -179,7 +179,7 @@ def normalize_reward_from_multi_traces_rloo(
             reward_mask = reward_mask.float()
             reward = reward * reward_mask
         reward = reward.view(-1)
-
+    print("reward after normalize",reward)
     return reward
     
     # reward = reward.view(batch_size, num_trace_per_sample)
@@ -2115,6 +2115,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 pass_rate = ((judge_rwd > margin).sum(1) > 0).float()
                 pass_rate = pass_rate.repeat(batch_size * num_trace_per_sample)[:batch_size * num_trace_per_sample]
                 pass_rate = pass_rate.to(action_log_probs.device)
+                pass_at_1 = (judge_rwd > margin).float().sum(1) / judge_rwd.shape[1]
+                pass_at_1 = pass_at_1.repeat(batch_size * num_trace_per_sample)[:batch_size * num_trace_per_sample]
 
                 if self.strategy.args.mask_pass_confident_samples:
                     sample_pass_rate = (judge_rwd > margin).float().sum(1) / judge_rwd.shape[1]
@@ -2124,6 +2126,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         else:
             pass_rate = torch.zeros(action_log_probs.shape[0], device=device)
         # print("value:",value.shape,value)
+        # print("pass_rate shape:",pass_rate.shape,"pass_at_1 shape:",pass_at_1.shape)
+        assert pass_rate.shape == pass_at_1.shape, f"pass_rate_shape: {pass_rate.shape} != pass_at_1_shape: {pass_at_1.shape}"
 
         return {
             "action_mask": action_mask,
@@ -2139,6 +2143,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             "wait_time": _wait_time,
             "rollout_time": rollout_time,
             "pass_rate": pass_rate,
+            "pass_at_1": pass_at_1,
             "overlong_mask": overlong_mask
         }
     
@@ -3327,7 +3332,9 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         item = {"problem": prompts[0], "golden_answer": prompts[2]}
         assert prompts[2] is not None, f"labels is None, prompts: {prompts}"
 
-        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360,"step_level_norm":False,"random_pick":True}
+        # args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360,"step_level_norm":False,"random_pick":True}
+        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"parent_shift":kwargs.get("parent_shift", True)}
+
         
         paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, args)
         assert paths is not None, f"paths is None, prompts: {prompts}"
@@ -3421,7 +3428,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         item = {"problem": prompts[0], "golden_answer": prompts[2]}
         assert prompts[2] is not None, f"labels is None, prompts: {prompts}"
 
-        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360,"step_level_norm":False,"random_pick":True}
+        # args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360,"step_level_norm":False,"random_pick":True}
+        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"parent_shift":kwargs.get("parent_shift", True)}
         
         paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, args)
         assert paths is not None, f"paths is None, prompts: {prompts}"

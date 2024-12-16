@@ -604,7 +604,7 @@ def query_vllm_platform(prompt, history=[], do_sample=True, url=None, max_tokens
             if response.status_code == 200:
                 resp_json = response.json()
                 content = resp_json['choices'][0]['message']['content'].strip()
-                print(f"vllm response: {content}")
+                # print(f"vllm response: {content}")
                 return content
             else:
                 print(
@@ -614,7 +614,7 @@ def query_vllm_platform(prompt, history=[], do_sample=True, url=None, max_tokens
             print(f"error in vllm, exception: {e}, url={url}")
             
     return None
-query_vllm_platform("Are you ready?", [], do_sample=True, url="http://172.18.70.13:8000", max_tokens=512, max_retry=1)
+query_vllm_platform("Are you ready?", [], do_sample=True, url="http://172.18.65.17:8000/v1", max_tokens=512, max_retry=1)
 
 
 def query_chatglm_tgi(prompt, history=[], do_sample=False, max_tokens=256, max_retry=3, url=None, temperature=0.4, top_p=0.1):
@@ -752,3 +752,45 @@ def split_text_by_tags(text):
     segments = [match[0] for match in matches]
 
     return segments
+
+import random
+from openai import OpenAI
+def apply_chat_template_qwen(system_prompt, user, assistant):
+    return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>\n"
+
+
+def get_qwen_remote_reward_model_value(urls, question, response):
+    # global count
+    # count +=1
+    # print(count)
+    url = random.choice(urls)
+    # print(url)
+
+    client = OpenAI(
+        api_key="EMPTY",
+        base_url=url,
+    )
+
+    system_prompt = "Please reason step by step."
+    # if len(question) + len(response) > 4096:
+    #     response = response[:4096 - len(question)]
+
+    conversation_str = apply_chat_template_qwen(system_prompt, question, response)
+    # print(conversation_str)
+
+    for _ in range(3):
+        try:
+        # if True:
+            responses = client.embeddings.create(
+                input=[conversation_str],
+                model="Qwen72BRM",
+            )
+
+            for data in responses.data:
+                # print("qwen rm data", float(data.embedding[-1]))
+                return float(data.embedding[-1])
+        except Exception as e:
+            print(e)
+            print("-- error in rm requests", url)
+            continue
+    return 0

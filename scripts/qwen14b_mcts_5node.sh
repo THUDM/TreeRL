@@ -11,12 +11,13 @@ set -x
 # sleep 5
 
 # ray start --head --node-ip-address 0.0.0.0 --num-gpus 8
+# pip install Levenshtein
 
 NUM_TRACE=16
-KL=0.0001
+KL=0.004
 
-TAG=RLOO-9B-sft-model-ms${NUM_TRACE}-golden-kl-${KL}-mathtrain30k-mcts-norm-inreward-vinevalue-tokenlevel-tree-normalized
-SAVE_DIR=/workspace/lurui/openrlhf-glm/checkpoints/reinforce/$TAG
+TAG=RLOO-qwen14b-ms${NUM_TRACE}-kl-${KL}-mathtrain30k-mcts-treenorm-purereward
+SAVE_DIR=/workspace/lurui/openrlhf-glm/checkpoints/reinforce/qwen14b/$TAG
 mkdir -p $SAVE_DIR
 
 # /workspace/zhenyu/data/research_training/math_data/numina_used_1019.jsonl,1
@@ -35,7 +36,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --runtime-env-json='{
         "working_dir": "/workspace/lurui/openrlhf-glm",
         "pip": "/workspace/lurui/openrlhf-glm/requirements.txt",
-        "excludes": ["*.ipynb", "tests", "log", "logs", "wandb", "checkpoints","reward","datasets"],
+        "excludes": ["*.ipynb", "tests", "log", "logs", "wandb", "checkpoints","reward","datasets",".git"],
         "env_vars": {
             "NCCL_TIMEOUT_MS": "3600000"
         }
@@ -47,10 +48,10 @@ ray job submit --address="http://127.0.0.1:8265" \
     --reward_num_gpus_per_node 8 \
     --actor_num_nodes 2 \
     --actor_num_gpus_per_node 8 \
-    --vllm_num_engines 8 \
+    --vllm_num_engines 16 \
     --vllm_tensor_parallel_size 1 \
-    --pretrain /data/o1-cloud/checkpoints/sft/glm_9b_1102 \
-    --reward_pretrain /data/o1-cloud/checkpoints/sft/glm_9b_1102 \
+    --pretrain /data/o1-cloud/checkpoints/sft/qw14/14b-chat-qw25-1129/chatglm_hf \
+    --reward_pretrain /data/o1-cloud/checkpoints/sft/qw14/14b-chat-qw25-1129/chatglm_hf \
     --save_path $SAVE_DIR \
     --ckpt_path $SAVE_DIR \
     --micro_train_batch_size 1 \
@@ -90,14 +91,15 @@ ray job submit --address="http://127.0.0.1:8265" \
     --wandb_project openrlhf_code_rl \
     --use_general_reward_for_stem \
     --use_mcts \
-    --use_vinevalue \
-    --lambd 1 \
+    --process_supervision \
+    --mask_repeated_samples \
+    --enable_prefix_caching \
     --max_nodes 256 \
     --max_node_per_depth 18 \
     --max_time_use 360 \
     --random_pick \
+    # --adam_offload \
     # --use_rule_based_reward \
-    # --mask_repeated_samples \
     # --random_temperature \
     # --use_rule_based_reward \
     # --use_general_reward_for_stem \
