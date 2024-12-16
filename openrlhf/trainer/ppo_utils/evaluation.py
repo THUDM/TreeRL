@@ -568,11 +568,53 @@ def generate_logits(urls, user_query, assistant_response):
     return parse_response(response)
 # print(generate_logits(["http://172.18.71.87:8000/v1"], "What is the value of $x$ in the equation $2x + 3 = 7$?", "The value of $x$ in the equation $2x + 3 = 7$ is $x = 2$."))
 
+# def apply_chat_template_qwen(system_prompt, user, assistant):
+#     return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>\n"
+
+
+# def get_qwen_remote_reward_model_value(urls, question, response):
+#     url = random.choice(urls)
+#     # print(url)
+
+#     client = OpenAI(
+#         api_key="EMPTY",
+#         base_url=url,
+#     )
+
+#     system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
+#     if len(question) + len(response) > 8192:
+#         response = response[:8192 - len(question)]
+
+#     conversation_str = apply_chat_template_qwen(system_prompt, question, response)
+#     # print(conversation_str)
+
+#     for _ in range(3):
+#         try:
+#         # if True:
+#             responses = client.embeddings.create(
+#                 input=[conversation_str],
+#                 model="Qwen72BRM",
+#             )
+
+#             for data in responses.data:
+#                 a = 5
+#                 b = 2
+#                 result = 1/(1+a**(-float(data.embedding[-1])/b))
+#                 return result
+#         except Exception as e:
+#             print(e)
+#             print("-- error in rm requests", url)
+#             continue
+#     return -10
+
 def apply_chat_template_qwen(system_prompt, user, assistant):
     return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>\n"
 
 
 def get_qwen_remote_reward_model_value(urls, question, response):
+    # global count
+    # count +=1
+    # print(count)
     url = random.choice(urls)
     # print(url)
 
@@ -581,9 +623,9 @@ def get_qwen_remote_reward_model_value(urls, question, response):
         base_url=url,
     )
 
-    system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
-    if len(question) + len(response) > 8192:
-        response = response[:8192 - len(question)]
+    system_prompt = "Please reason step by step."
+    # if len(question) + len(response) > 4096:
+    #     response = response[:4096 - len(question)]
 
     conversation_str = apply_chat_template_qwen(system_prompt, question, response)
     # print(conversation_str)
@@ -597,15 +639,13 @@ def get_qwen_remote_reward_model_value(urls, question, response):
             )
 
             for data in responses.data:
-                a = 5
-                b = 2
-                result = 1/(1+a**(-float(data.embedding[-1])/b))
-                return result
+                # print("qwen rm data", float(data.embedding[-1]))
+                return float(data.embedding[-1])
         except Exception as e:
             print(e)
             print("-- error in rm requests", url)
             continue
-    return -10
+    return 0
 
 # get_qwen_remote_reward_model_value(["http://172.20.65.240:8000/v1"], "What is the value of $x$ in the equation $2x + 3 = 7$?", "The value of $x$ in the equation $2x + 3 = 7$ is $x = 2$.")
 def query_tgi_get_first_token(prompt, urls):
