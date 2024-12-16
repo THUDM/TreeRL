@@ -346,7 +346,8 @@ class ActorModelRayActor(BasePPORole):
             max_time_use = args.max_time_use,
             step_level_norm = args.step_level_norm,
             random_pick = args.random_pick,
-            parent_shift = args.parent_shift
+            parent_shift = args.parent_shift,
+            use_orm_reward = args.use_orm_reward,
         )
 
         trainer.fit(self.prompts_dataloader, self.pretrain_dataloader, args)
