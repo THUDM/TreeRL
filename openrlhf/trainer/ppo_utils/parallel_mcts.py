@@ -74,7 +74,10 @@ for key, value in ips.items():
 
 # with open("./configs/api_config_rm_general.json") as f:
 #     rm_api_config = json.load(f)
-with open("/workspace/lurui/openrlhf-glm/openrlhf/trainer/ppo_utils/configs/api_qwen_rm.json") as f:
+# with open("/workspace/lurui/openrlhf-glm/openrlhf/trainer/ppo_utils/configs/api_qwen_rm.json") as f:
+#     rm_api_config = json.load(f)
+
+with open("/workspace/lurui/openrlhf-glm/openrlhf/trainer/ppo_utils/configs/api_qwen72_v6_rm.json") as f:
     rm_api_config = json.load(f)
 
 RM_URLS = []
@@ -330,6 +333,9 @@ class MCTSr(BaseModel):
                     # qwen_urls=qwen_urls,
                     urls=EVALUATOR_URLS)
                 reward = result
+            value = get_qwen_remote_reward_model_value(
+                urls= RM_URLS, question = self.problem, response = node.aggregate_answer)
+            node.accumulated_value = value
         else:
             # reward = generate_logits(
             #     urls=RM_URLS, user_query = self.problem, assistant_response = node.aggregate_answer,
@@ -372,6 +378,7 @@ class MCTSr(BaseModel):
             while parent:
                 parent.terminal_in_subtree += 1
                 parent.correct_terminal_in_subtree += 1
+                parent.accumulated_value += node.accumulated_value
                 parent = parent.parent
         elif node.terminal:
             node.terminal_in_subtree += 1
@@ -379,6 +386,7 @@ class MCTSr(BaseModel):
             parent = node.parent
             while parent:
                 parent.terminal_in_subtree += 1
+                parent.accumulated_value += node.accumulated_value
                 parent = parent.parent
 
     def uct(self, node: MCTSNode,offset = 1):
@@ -587,6 +595,7 @@ class MCTSr(BaseModel):
                 print(f"terminated because reach {leaf_num} leaf nodes")
                 terminal_flag = True
                 break
+        os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs", exist_ok=True)
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/leaves.jsonl", "a") as f:
             #输出len(self.leaves)数量即可
             f.write(json.dumps({"leaf num": len(self.leaves)}))
@@ -1180,6 +1189,7 @@ def mcts_worker(
         # print("selected_terminals",mcts.selected_terminals[0])
         paths = gather_paths(mcts.selected_terminals,args["path_num"],mcts.parent_shift)
         time_used = time.time() - start_time
+        os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs", exist_ok=True)
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
         # with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
             tree_json = convert_to_json(root)
@@ -1192,6 +1202,7 @@ def mcts_worker(
         paths = None
         time_used = time.time() - start_time
     if paths is None:
+        os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs", exist_ok=True)
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/response_type.jsonl", "a",encoding="utf-8") as f:
             f.write("use chain_worker\n")
         init_prompt = tokenize_fn([[problem],[None]],args["prompt_max_len"], device="cpu")["input_ids"][0].tolist()
@@ -1205,13 +1216,48 @@ def mcts_worker(
 def get_stops():
     return ["<|user|>", "<|endoftext|>", "<|observation|>","\n\n"]
 
+def normalize_all_paths(paths):
+    # 对所有路径进行归一化
+    all_values = []
+    for path in paths:
+        all_values+=[node["value"] for node in path]
+    print("all_values",len(all_values))
+    _sum = sum(all_values)
+    num = len(all_values) - 1
+    print("mean",_sum/num+1)
+    for path in paths:
+        for node in path:
+            node["value"] = node["value"] - ((_sum - node["value"]) / num)
+            # node["value"] = node["value"] - (_sum/num+1)
+    return paths
+
+def normalize_selected_terminals(selected_terminals: list[MCTSNode]):
+    leaf_orm_value = [leaf.accumulated_value for leaf in selected_terminals]
+    _sum = sum(leaf_orm_value)
+    num = len(leaf_orm_value) - 1
+    mean = [(_sum - leaf_orm_value[i]) / num for i in range(len(leaf_orm_value))]
+    orm_normalized = [leaf_orm_value[i] - mean[i] for i in range(len(leaf_orm_value))]
+    return orm_normalized
+
+def fill_in_paths(paths):
+    # 对于每个路径，如果存在"value"=0，就用他的前一个节点的"value"填充
+    for path in paths:
+        for i in range(1,len(path)):
+            if path[i]["value"] == 0:
+                assert i > 0, "value=0 in the first node"
+                path[i]["value"] = path[i-1]["value"]
+    return paths
+
 def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dict[str, Any]]:
     if parent_shift:
         print(" use parent shift")
         path = []
         while node.parent is not None:
-            print("pass_ratio",node.correct_terminal_in_subtree/node.terminal_in_subtree ,node.parent.correct_terminal_in_subtree/node.parent.terminal_in_subtree)
-            path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":node.correct_terminal_in_subtree/node.terminal_in_subtree - node.parent.correct_terminal_in_subtree/node.parent.terminal_in_subtree})
+            parent_value = node.parent.accumulated_value/node.parent.terminal_in_subtree
+            child_value = node.accumulated_value/node.terminal_in_subtree
+            # print("pass_ratio",parent_value,child_value)
+            path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value - parent_value})
+            # path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value})
             node = node.parent
         return path[::-1]
     else:
@@ -1227,10 +1273,15 @@ def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bo
     paths = []
     if len(selected_terminals) < pass_k:
         return None
+    terminal_values = normalize_selected_terminals(selected_terminals)
     # 添加 selected_terminal 的叶子节点路径
     for terminal_node in selected_terminals:
         paths.append(path_from_root_to_node(terminal_node,parent_shift))
     assert len(paths) == pass_k, f"Failed to generate {pass_k} paths,{len(paths)} instead"
+    paths = fill_in_paths(paths)
+    # for path in paths:
+    #     for node in path:
+    #         node["value"] = (node["value"] + terminal_values[paths.index(path)])/2
     return paths
 
 # 封装为一个函数,输入为item,输出为paths

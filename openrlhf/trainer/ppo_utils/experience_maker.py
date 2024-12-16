@@ -2095,8 +2095,10 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         #     r = r * repeated_mask
         if self.strategy.args.mask_repeated_samples:
             # r = r * repeated_mask
+            # 找出 r 的最小值
+            r_min = r.min().item()
             print("repeated_mask",repeated_mask.shape,"r",r.shape)
-            r[repeated_mask == 0] = -1
+            r[repeated_mask == 0] = r_min - 1
 
         if self.remote_reward_url:
             assert batch_first, f"batch_first must be set to True: {batch_first}"
@@ -2469,8 +2471,9 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 
         if self.strategy.args.mask_repeated_samples:
             # r = r * repeated_mask
+            r_min = r.min().item()
             print("repeated_mask",repeated_mask.shape,"r",r.shape)
-            r[repeated_mask == 0] = -1
+            r[repeated_mask == 0] = r_min - 1
 
 
         if self.remote_reward_url:

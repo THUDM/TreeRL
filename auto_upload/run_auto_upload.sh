@@ -6,7 +6,7 @@
 
 EVAL_DIR=/workspace/lurui/rm_simple_evals/RL_auto_results
 # example 
-TUNED_MODEL_NAME=RLOO-glm9b-o1sft-model-ms32-kl-0.0001-math-chain-rmonly
+TUNED_MODEL_NAME=RLOO-glm9b-o1sft-model-ms32-kl-0.0001-math-mcts-advantage-rmonly
 # TUNED_MODEL_NAME=$1
 
 python auto_upload.py \
