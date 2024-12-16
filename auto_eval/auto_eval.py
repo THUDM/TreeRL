@@ -17,10 +17,10 @@ def parse_args():
     parser.add_argument('--checkpoint_dirs', type=str, nargs='+',
                         help='Specific checkpoint directory names to evaluate under base_dir')
     parser.add_argument('--result_base_dir', type=str,
-                        default='/workspace/lurui/rm_simple_evals/RL_auto_results',
+                        default='/workspace/lurui/glm-simple-evals-1007/glm-simple-evals/RL_auto_results',
                         help='Base directory for evaluation results')
     parser.add_argument('--eval_script', type=str,
-                        default='/workspace/lurui/rm_simple_evals/auto_test_math_policy.sh',
+                        default='/workspace/lurui/glm-simple-evals-1007/glm-simple-evals/test_math_mcts.sh',
                         help='Path to evaluation script')
     parser.add_argument('--base_script', type=str,
                         default='up_model.sh',
@@ -110,6 +110,8 @@ def run_script_non_blocking(cmd):
 
 
 def run_command(cmd, non_blocking=False, show_output=False):
+    # print(cmd)
+    # exit(1)
     # """运行shell命令并返回结果"""
     if non_blocking:
         return run_script_non_blocking(cmd)
@@ -138,6 +140,10 @@ def cleanup_previous_services():
     """清理之前可能运行的服务"""
     try:
         cmd = "pkill -f -9 'import spawn_main'"
+        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+        time.sleep(10)  # 等待进程完全终止
+        cmd = "pkill -f 'vllm.entrypoints.openai.api_server'"
         subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
         time.sleep(10)  # 等待进程完全终止
