@@ -213,6 +213,15 @@ def similarity(str1, str2, split_chars, threshold=0.3, min_proportion=0.65):
 
     return False
 
+def similarity_naive(str1,str2):
+    if str1 == str2:
+        with open("/workspace/lurui/openrlhf-mcts/data/similarity.log", "a") as f:
+            f.write(f"similarity action\n")
+    else:
+        with open("/workspace/lurui/openrlhf-mcts/data/similarity.log", "a") as f:
+            f.write(f"new action\n")
+    return str1.strip() == str2.strip()
+
 
 class MCTSNode(BaseModel):
     state: List[int]
@@ -337,6 +346,9 @@ class MCTSr(BaseModel):
                 reward = result
             value = get_qwen_remote_reward_model_value(
                 urls= RM_URLS, question = self.problem, response = node.aggregate_answer)
+            sigmoid_value = 1 / (1 + math.exp(-value))
+            coeff = 0.5
+            value = reward + coeff * sigmoid_value
             node.accumulated_value = value
         else:
             # reward = generate_logits(
@@ -687,16 +699,22 @@ class MCTSr(BaseModel):
                 new_action_token = response_token
 
                 # 过滤与当前 children_map[node] 中的项重复
-                # existing_actions = [
-                #     child.answer
-                #     for child in children_map[node]
-                # ]
+                existing_actions = [
+                    child.answer
+                    for child in children_map[node]
+                ]
 
                 # if any(
                 #     similarity(new_action, existing_action, split_chars=["\n\n", ". "])
                 #     for existing_action in existing_actions
                 # ):
                 #     continue  # 如果新的动作与现有的孩子过于相似，跳过
+
+                if any(
+                    similarity_naive(new_action, existing_action)
+                    for existing_action in existing_actions
+                ):
+                    continue  # 如果新的动作与现有的孩子过于相似，跳过
 
                 # expanded_state = node.state + response_token
                 # expanded_state = torch.cat([node.state, response_token], dim=1)
@@ -993,7 +1011,7 @@ class MCTSr(BaseModel):
         elif total_sum > self.path_num:
             if correct_leaf is None:
                 # 首先随机选self.path_num个父节点
-                selected_parents = random.sample(parent_to_children.keys(), self.path_num)
+                selected_parents = random.sample(set(parent_to_children.keys()), self.path_num)
                 selected_terminals = []
                 for parent in selected_parents:
                     selected_terminals.append(random.choice(parent_to_children[parent]))
@@ -1243,8 +1261,9 @@ def mcts_worker(
     )
     # print(mcts.max_children)
     start_time = time.time()
+    mcts.run()
     try:
-        mcts.run()
+        # mcts.run()
         root = mcts.root
         # with open("/workspace/lurui/openrlhf-glm/logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
         # # with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
@@ -1328,6 +1347,8 @@ def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dic
         while node.parent is not None:
             parent_value = node.parent.accumulated_value/node.parent.terminal_in_subtree
             child_value = node.accumulated_value/node.terminal_in_subtree
+            if node.terminal:
+                assert node.terminal_in_subtree == 1, "terminal_in_subtree is not 1"
             # print("pass_ratio",parent_value,child_value)
             path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value - parent_value})
             # path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value})

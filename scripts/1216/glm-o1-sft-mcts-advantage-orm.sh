@@ -14,7 +14,7 @@ set -x
 NUM_TRACE=16
 KL=0.0001
 
-TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-advantage-plus-orm
+TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-advantage-plus-orm-closesimilaritycheck-filtersame-1plus05
 SAVE_DIR=/workspace/lurui/openrlhf-glm/checkpoints/reinforce/$TAG
 mkdir -p $SAVE_DIR
 

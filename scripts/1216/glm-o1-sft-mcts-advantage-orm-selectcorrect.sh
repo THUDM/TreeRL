@@ -12,7 +12,7 @@ set -x
 # ray start --head --node-ip-address 0.0.0.0 --num-gpus 8
 
 NUM_TRACE=16
-KL=0.0001
+KL=0
 
 TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-advantage-plus-orm-selectcorrect
 SAVE_DIR=/workspace/lurui/openrlhf-glm/checkpoints/reinforce/$TAG
