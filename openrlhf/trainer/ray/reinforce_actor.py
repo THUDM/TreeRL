@@ -348,6 +348,7 @@ class ActorModelRayActor(BasePPORole):
             random_pick = args.random_pick,
             parent_shift = args.parent_shift,
             use_orm_reward = args.use_orm_reward,
+            select_correct_leaf = args.select_correct_leaf,
         )
 
         trainer.fit(self.prompts_dataloader, self.pretrain_dataloader, args)

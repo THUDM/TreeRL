@@ -309,6 +309,8 @@ if __name__ == "__main__":
     parser.add_argument("--use_mcts", action="store_true", default=False)
     parser.add_argument("--use_vinevalue", action="store_true", default=False)
     parser.add_argument("--use_orm_reward", action="store_true", default=False)
+    parser.add_argument("--select_correct_leaf", action="store_true", default=False)
+
 
 
     args = parser.parse_args()
