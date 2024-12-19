@@ -614,7 +614,7 @@ def query_vllm_platform(prompt, history=[], do_sample=True, url=None, max_tokens
             print(f"error in vllm, exception: {e}, url={url}")
             
     return None
-query_vllm_platform("Are you ready?", [], do_sample=True, url="http://172.18.65.17:8000/v1", max_tokens=512, max_retry=1)
+query_vllm_platform("Are you ready?", [], do_sample=True, url="http://172.18.70.13:8000/v1", max_tokens=512, max_retry=1)
 
 
 def query_chatglm_tgi(prompt, history=[], do_sample=False, max_tokens=256, max_retry=3, url=None, temperature=0.4, top_p=0.1):

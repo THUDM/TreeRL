@@ -6,7 +6,7 @@
 
 EVAL_DIR=/workspace/lurui/rm_simple_evals/RL_auto_results
 # example 
-TUNED_MODEL_NAME=RLOO-glm9b-o1sft-model-ms16-kl-0.0001-math-mcts-advantage-plus-orm-selectcorrect
+TUNED_MODEL_NAME=RLOO-glm9b-o1sft-model-ms16-kl-0-math-mcts-advantage-plus-orm-closesimilaritycheck-filtersame-1plus05-fixedge
 # TUNED_MODEL_NAME=$1
 
 python auto_upload.py \

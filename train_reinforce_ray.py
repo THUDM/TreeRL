@@ -310,6 +310,12 @@ if __name__ == "__main__":
     parser.add_argument("--use_vinevalue", action="store_true", default=False)
     parser.add_argument("--use_orm_reward", action="store_true", default=False)
     parser.add_argument("--select_correct_leaf", action="store_true", default=False)
+    parser.add_argument("--use_chain_reward", action="store_true", default=False)
+    parser.add_argument("--use_state_value_reward", action="store_true", default=False)
+    parser.add_argument("--use_pure_RM", action="store_true", default=False)
+
+
+
 
 
 

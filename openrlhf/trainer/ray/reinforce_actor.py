@@ -349,6 +349,9 @@ class ActorModelRayActor(BasePPORole):
             parent_shift = args.parent_shift,
             use_orm_reward = args.use_orm_reward,
             select_correct_leaf = args.select_correct_leaf,
+            use_chain_reward = args.use_chain_reward,
+            use_state_value_reward = args.use_state_value_reward,
+            use_pure_RM = args.use_pure_RM,
         )
 
         trainer.fit(self.prompts_dataloader, self.pretrain_dataloader, args)

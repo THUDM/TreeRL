@@ -329,7 +329,7 @@ def check_result(
     if answer is None:
         return None, 0
     check = check_equality(answer, label, urls=urls)
-    # print("===",check,"===",answer,label)
+    print("===",check,"===",answer,label)
     return answer, 1 if check else 0
 
 
@@ -403,7 +403,7 @@ def query_local_vllm_completions_ids(
         max_tokens=max_tokens,
         min_tokens = min_tokens,
         skip_special_tokens = skip_special_tokens,
-        stop = stops,
+        stop_token_ids = stops,
         # seed = random.randint(0, 100000),
         n = n,
     )
@@ -609,7 +609,7 @@ def generate_logits(urls, user_query, assistant_response):
 #     return -10
 
 def apply_chat_template_qwen(system_prompt, user, assistant):
-    return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>\n"
+    return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>"
 
 
 def get_qwen_remote_reward_model_value(urls, question, response):

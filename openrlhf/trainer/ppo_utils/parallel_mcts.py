@@ -244,6 +244,7 @@ class MCTSNode(BaseModel):
     accumulated_value: float = 0
     visited_terminal: int = 0
     repeat:bool = False
+    node_id: int = 0
 
     def add_child(self, child_node: MCTSNode):
         self.children.append(child_node)
@@ -257,7 +258,7 @@ class MCTSNode(BaseModel):
         return False
 
     def __hash__(self):
-        return hash((self.aggregate_answer, self.answer))
+        return hash((self.node_id))
 
     def add_reward(self, reward: int):
         self.reward_samples.append(reward)
@@ -304,6 +305,7 @@ class MCTSr(BaseModel):
     top_p: float = 0.9
     llms : List
     tokenize_fn :Callable 
+    detokenize_fn :Callable
 
     # Logs
     rewards: list[float] = []
@@ -326,6 +328,10 @@ class MCTSr(BaseModel):
     parent_shift: bool = False
     use_orm_reward: bool = False
     select_correct_leaf: bool = False
+    leaf_num_count: int = 1
+    use_chain_reward: bool = False
+    use_state_value_reward: bool = False
+    use_pure_RM:bool = False
 
     # def __init__(self, temperature, top_p, model_name, stops=None):
     #     super().__init__()
@@ -346,10 +352,14 @@ class MCTSr(BaseModel):
                 reward = result
             value = get_qwen_remote_reward_model_value(
                 urls= RM_URLS, question = self.problem, response = node.aggregate_answer)
-            sigmoid_value = 1 / (1 + math.exp(-value))
-            coeff = 0.5
-            value = reward + coeff * sigmoid_value
-            node.accumulated_value = value
+            if self.use_pure_RM:
+                print("use pure RM")
+                node.accumulated_value = value
+            else:
+                sigmoid_value = 1 / (1 + math.exp(-value))
+                coeff = 0.5
+                value = reward + coeff * sigmoid_value
+                node.accumulated_value = value
         else:
             # reward = generate_logits(
             #     urls=RM_URLS, user_query = self.problem, assistant_response = node.aggregate_answer,
@@ -544,6 +554,7 @@ class MCTSr(BaseModel):
         #     raise NotImplementedError(
         #         f"Backbone {self.backbone} not implemented")
         
+        # init_prompt = self.tokenize_fn([[self.problem],[None]],self.prompt_max_len, device="cpu")
         init_prompt = self.tokenize_fn([[self.problem],[None]],self.prompt_max_len, device="cpu")["input_ids"][0]
 
         self.root = MCTSNode(
@@ -647,7 +658,7 @@ class MCTSr(BaseModel):
             return [], 0
         stops = get_stops()
         all_children_token_num = 0
-        max_tokens_per_step = 512
+        max_tokens_per_step = self.max_token_num
         max_attempts = 3
         token_threshold = 150
         children_map = {node: [] for node in nodes}  # 用于记录每个节点的孩子
@@ -693,7 +704,9 @@ class MCTSr(BaseModel):
 
                 action = response
                 if not ((stop_token is None) or (stop_token in eos_tokens_set)):
-                    action += stop_token
+                    # action += stop_token
+                    stop_token_str = self.detokenize_fn([stop_token])[0]
+                    action += stop_token_str
 
                 new_action = action
                 new_action_token = response_token
@@ -710,11 +723,11 @@ class MCTSr(BaseModel):
                 # ):
                 #     continue  # 如果新的动作与现有的孩子过于相似，跳过
 
-                if any(
-                    similarity_naive(new_action, existing_action)
-                    for existing_action in existing_actions
-                ):
-                    continue  # 如果新的动作与现有的孩子过于相似，跳过
+                # if any(
+                #     similarity_naive(new_action, existing_action)
+                #     for existing_action in existing_actions
+                # ):
+                #     continue  # 如果新的动作与现有的孩子过于相似，跳过
 
                 # expanded_state = node.state + response_token
                 # expanded_state = torch.cat([node.state, response_token], dim=1)
@@ -736,6 +749,12 @@ class MCTSr(BaseModel):
                 finished = self.judge_finished(
                     if_finish, node.depth + 1
                 )
+                if len(new_aggregate_answer_token) > self.max_token_num:
+                    print("terminal because exceed max token num")
+                elif find_repeated_patterns(new_aggregate_answer):
+                    print("terminal because find repeated patterns")
+                elif finished:
+                    print("terminal because finished")
 
                 child_node = MCTSNode(
                     state=expanded_state,
@@ -747,8 +766,10 @@ class MCTSr(BaseModel):
                     depth=node.depth + 1,
                     terminal=finished,
                     max_children=self.max_children,
-                    repeat=repeat
+                    repeat=repeat,
+                    node_id = self.leaf_num_count
                 )
+                self.leaf_num_count += 1
 
                 children_map[node].append(child_node)
 
@@ -1118,6 +1139,7 @@ def convert_to_json(node: MCTSNode):
             "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
             "accumulated_value": node.accumulated_value,
             "visited_terminal": node.visited_terminal,
+            "node_id": node.node_id
         }
     else:
         return {
@@ -1136,6 +1158,7 @@ def convert_to_json(node: MCTSNode):
             "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
             "accumulated_value": node.accumulated_value,
             "visited_terminal": node.visited_terminal,
+            "node_id": node.node_id
         }
 
 
@@ -1221,6 +1244,7 @@ def mcts_worker(
     item,
     llm, 
     tokenize_fn,
+    detokenize_fn,
     prompt_key="problem",
     answer_key="golden_answer",
     args=None
@@ -1248,6 +1272,7 @@ def mcts_worker(
         look_ahead=args["look_ahead"],
         llms=[llm],
         tokenize_fn = tokenize_fn,
+        detokenize_fn = detokenize_fn,
         concurrent_num=args["concurrent_num"],
         path_num = args["path_num"],
         prompt_max_len = args["prompt_max_len"],
@@ -1257,7 +1282,10 @@ def mcts_worker(
         random_pick = args["random_pick"],
         parent_shift = args["parent_shift"],
         use_orm_reward = args["use_orm_reward"],
-        select_correct_leaf = args["select_correct_leaf"]
+        select_correct_leaf = args["select_correct_leaf"],
+        use_chain_reward = args["use_chain_reward"],
+        use_state_value_reward = args["use_state_value_reward"],
+        use_pure_RM = args["use_pure_RM"]
     )
     # print(mcts.max_children)
     start_time = time.time()
@@ -1273,7 +1301,7 @@ def mcts_worker(
         #     json.dump(tree_json, f)
         #     f.write("\n")
         # print("selected_terminals",mcts.selected_terminals[0])
-        paths = gather_paths(mcts.selected_terminals,args["path_num"],mcts.parent_shift,mcts.use_orm_reward)
+        paths = gather_paths(mcts.selected_terminals,args["path_num"],parent_shift = mcts.parent_shift,use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward)
         time_used = time.time() - start_time
         os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs", exist_ok=True)
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
@@ -1294,6 +1322,7 @@ def mcts_worker(
         os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs", exist_ok=True)
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/response_type.jsonl", "a",encoding="utf-8") as f:
             f.write("use chain_worker\n")
+        # init_prompt = tokenize_fn([[problem],[None]],args["prompt_max_len"], device="cpu")
         init_prompt = tokenize_fn([[problem],[None]],args["prompt_max_len"], device="cpu")["input_ids"][0].tolist()
         paths = chain_worker(item, llm, init_prompt, prompt_key, answer_key, args)
         return paths, init_prompt
@@ -1302,8 +1331,10 @@ def mcts_worker(
             f.write("use mcts_worker\n")
         return paths,root.state
 
+# def get_stops():
+#     return ["<|user|>", "<|endoftext|>", "<|observation|>","\n\n"]
 def get_stops():
-    return ["<|user|>", "<|endoftext|>", "<|observation|>","\n\n"]
+    return [271, 151336, 151329,151338, 2533, 382, 1447, 21467, 692]
 
 def normalize_all_paths(paths):
     # 对所有路径进行归一化
@@ -1341,6 +1372,39 @@ def fill_in_paths(paths):
                 path[i]["value"] = path[i-1]["value"]
     return paths
 
+def normalize_all_paths(paths,step_level_norm = False):
+    # 对所有路径进行归一化
+    if step_level_norm:
+        state_value_sum = 0
+        state_value_num = 0
+        for path in paths:
+            for node in path:
+                state_value_sum += node["state_value"]
+                state_value_num += 1
+        if state_value_num == 0:
+            mean = 0
+        else:
+            mean = state_value_sum/state_value_num
+        for path in paths:
+            for node in path:
+                node["state_value"] = node["state_value"] - mean
+        return paths
+    else:
+        state_value_sum = 0
+        state_value_num = 0
+        for path in paths:
+            for node in path:
+                state_value_sum += node["state_value"]*len(node["token_answer"])
+                state_value_num += len(node["token_answer"])
+        if state_value_num == 0:
+            mean = 0
+        else:
+            mean = state_value_sum/state_value_num
+        for path in paths:
+            for node in path:
+                node["state_value"] = node["state_value"] - mean
+        return paths
+
 def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dict[str, Any]]:
     if parent_shift:
         path = []
@@ -1350,7 +1414,7 @@ def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dic
             if node.terminal:
                 assert node.terminal_in_subtree == 1, "terminal_in_subtree is not 1"
             # print("pass_ratio",parent_value,child_value)
-            path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value - parent_value})
+            path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value - parent_value,"state_value":child_value})
             # path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value})
             node = node.parent
         return path[::-1]
@@ -1362,7 +1426,7 @@ def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dic
             node = node.parent
         return path[::-1][1:]
 
-def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False) -> List[List[Dict[str, Any]]]:
+def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False) -> List[List[Dict[str, Any]]]:
     paths = []
     if len(selected_terminals) < pass_k:
         return None
@@ -1372,13 +1436,24 @@ def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bo
         paths.append(path_from_root_to_node(terminal_node,parent_shift))
     assert len(paths) == pass_k, f"Failed to generate {pass_k} paths,{len(paths)} instead"
     paths = fill_in_paths(paths)
-    if use_orm_reward:
+    if use_chain_reward:
+        print("use chain reward in mcts!!")
+        for path in paths:
+            for node in path:
+                node["value"] = terminal_values[paths.index(path)]
+    elif use_orm_reward:
         print("use orm reward in mcts!!")
         for path in paths:
             for node in path:
                 node["value"] = (node["value"] + terminal_values[paths.index(path)])/2
+    elif use_state_value_reward:
+        print("use state value reward in mcts!!")
+        paths = normalize_all_paths(paths,step_level_norm)
+        for path in paths:
+            for node in path:
+                node["value"] = (node["value"] + node["state_value"])/2
     return paths
 
 # 封装为一个函数,输入为item,输出为paths
-def parallel_mcts(item, llm, tokenize_fn, args):
-    return mcts_worker(item, llm, tokenize_fn, args["prompt_key"], args["answer_key"], args)
+def parallel_mcts(item, llm, tokenize_fn, detokenize_fn, args):
+    return mcts_worker(item, llm, tokenize_fn, detokenize_fn, args["prompt_key"], args["answer_key"], args)
