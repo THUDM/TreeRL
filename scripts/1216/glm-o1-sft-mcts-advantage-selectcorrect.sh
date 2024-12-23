@@ -11,10 +11,10 @@ set -x
 
 # ray start --head --node-ip-address 0.0.0.0 --num-gpus 8
 
-NUM_TRACE=32
-KL=0.0001
+NUM_TRACE=16
+KL=0
 
-TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-pureRM-chainonly-firsttokentemp
+TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-advantage-plus-orm-selectcorrect
 SAVE_DIR=/workspace/lurui/openrlhf-glm/checkpoints/reinforce/$TAG
 mkdir -p $SAVE_DIR
 
@@ -44,9 +44,9 @@ ray job submit --address="http://127.0.0.1:8265" \
     --ref_num_gpus_per_node 8 \
     --reward_num_nodes 0 \
     --reward_num_gpus_per_node 8 \
-    --actor_num_nodes 2 \
+    --actor_num_nodes 1 \
     --actor_num_gpus_per_node 8 \
-    --vllm_num_engines 16 \
+    --vllm_num_engines 8 \
     --vllm_tensor_parallel_size 1 \
     --pretrain /workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381 \
     --reward_pretrain /workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381 \
@@ -63,7 +63,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --generate_max_len 4096 \
     --zero_stage 2 \
     --bf16 \
-    --actor_learning_rate 2e-6 \
+    --actor_learning_rate 1.5e-6 \
     --lr_scheduler_type cosine \
     --min_actor_learning_rate_lr 1 \
     --l2 0.1 \
@@ -71,7 +71,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --prompt_data $DATASETS \
     --max_samples 300000 \
     --normalize_reward \
-    --top_p 0.95 \
+    --top_p 0.9 \
     --temperature 1.2 \
     --actor_init_on_gpu \
     --num_trace_per_sample $NUM_TRACE \
@@ -95,9 +95,8 @@ ray job submit --address="http://127.0.0.1:8265" \
     --max_time_use 360 \
     --random_pick \
     --parent_shift \
-    --use_chain_reward \
-    --use_pure_RM \
     --select_correct_leaf \
+    --use_pure_RM \
     --first_token_temperature 1 \
     # --use_general_reward_for_stem \
     # --use_rule_based_reward \

@@ -95,7 +95,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --max_time_use 360 \
     --random_pick \
     --parent_shift \
-    --use_chain_reward \
+    --use_state_value_reward \
     --use_pure_RM \
     --select_correct_leaf \
     --first_token_temperature 1 \

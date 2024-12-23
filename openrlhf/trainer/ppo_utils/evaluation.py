@@ -281,8 +281,6 @@ def extract_answer(
         if len(answer) == 0:
             answer = re.findall(
                 r'\\boxed\{([^{}]*(?:\{[^{}]*\})*[^{}]*)\}', resp_text)
-    elif "### Final Answer" in resp_text:
-        answer = re.findall(r'<answer>([^<>]*)', resp_text)
 
     if answer:
         answer = answer[0].strip()
@@ -313,7 +311,7 @@ def check_equality(expr1: str, expr2: str, urls):
     prompt = EQUALITY_TEMPLATE % {"expression1": expr1, "expression2": expr2}
     response = query_sglang_chat(prompt, urls)
     if isinstance(response, str):
-        return "yes" in response.lower().strip()
+        return response.lower().strip() == "yes"
     else:
         return 0
 
@@ -696,3 +694,36 @@ def query_tgi_get_first_token(prompt, urls):
         first_token_list = list(set(first_token_list))
         return first_token_list
 
+def top_k_sampling(llm, prompts,stops = None,skip_special_tokens=True,top_p=0.9):
+        # _prompts = [prompt.strip() + prefix_text for prompt in prompts[0]]
+        # prompts = [_prompts, prompts[1]]
+        # prompt_token_ids = [tokenize_fn([[prompt]], 1024, device="cpu") for prompt in prompts]
+        prompt_token_ids = prompts
+        sampling_params = SamplingParams(
+            logprobs=4,
+            max_tokens=1,
+            temperature=5,
+            top_k=16,
+            min_p=0,
+            skip_special_tokens=skip_special_tokens,
+            stop_token_ids=stops,
+            top_p=top_p,
+            min_tokens=0
+        )
+        input_ids_with_next_token = []
+        # outputs = ray.get(vllm_engine.generate.remote(sampling_params=params, prompt_token_ids=prompt_token_ids))
+        print(prompt_token_ids)
+        # outputs = llm.generate(prompt_token_ids = prompt_token_ids, sampling_params = sampling_params)
+        outputs = ray.get(llm.generate.remote(prompt_token_ids = prompt_token_ids, sampling_params = sampling_params))
+        print(outputs)
+        first_tokens_lists = []
+        for prompt_id, output in zip(prompt_token_ids, outputs):
+            for out in output.outputs:
+                logprobs = out.logprobs[0]
+                used_logprobs = [k for k, v in logprobs.items() if v.logprob > -10]
+                if len(used_logprobs) == 0:
+                    used_logprobs = [k for k in logprobs.keys()]
+                first_tokens_lists.append(used_logprobs)
+        return first_tokens_lists
+# input_ids_with_next_token = top_k_sampling(llm, ["What is 1+1?", "What is 2+2?"])
+# print(input_ids_with_next_token)
