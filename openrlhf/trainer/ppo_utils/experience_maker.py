@@ -3135,7 +3135,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             # min_p=self.strategy.args.min_p,
             # stop=["<|user|>", "<|observation|>"],
         )
-        print("max_tokens",kwargs.get("max_new_tokens", 4096))
+        print("sampling_params",sampling_params)
 
         # TODO: can't pass `max_length` to vLLM's tokenizer for input truncation, remove this once it is supported.
         input_ids = self.tokenize_fn(prompts, self.prompt_max_len, device="cpu")["input_ids"]
@@ -3252,13 +3252,21 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         item = {"problem": prompts[0], "golden_answer": prompts[2]}
         assert prompts[2] is not None, f"labels is None, prompts: {prompts}"
 
-        # args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 512, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 32, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024}
-        args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"parent_shift":kwargs.get("parent_shift", True),"use_orm_reward":kwargs.get("use_orm_reward", False)}
+        args = {"temperature": kwargs.get("temperature", 1.2), "top_p": kwargs.get("top_p", 0.9), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "min_children": 4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"parent_shift":kwargs.get("parent_shift", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False)}
         print("mcts args:",args)
+        
+        def decode_fn(ids):
+            return self.tokenizer.decode(ids,skip_special_tokens=False)
 
-        paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, args)
+        paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, decode_fn, args)
         assert paths is not None, f"paths is None, prompts: {prompts}"
         # print("paths:",paths)
+        with open("/workspace/lurui/openrlhf-glm/logs/outputs/treepath.jsonl", "a") as f:
+            for path in paths:
+                steps = []
+                for node in path:
+                    steps.append({"answer":node["answer"],"value":node["value"],"pass_ratio":node["pass_ratio"]})
+                f.write(json.dumps(steps) + "\n")
             
         # NOTE: concat all outputs to following format:
         #

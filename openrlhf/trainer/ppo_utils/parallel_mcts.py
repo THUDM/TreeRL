@@ -40,7 +40,8 @@ from openrlhf.trainer.ppo_utils.evaluation import (
     QWEN_SYSTEM_PROMPT,
     UNDERSTANDING_PROMPT,
     QWEN_QA_PROMPT,
-    GLM_QA_PROMPT
+    GLM_QA_PROMPT,
+    top_k_sampling,
 )
 
 from vllm import LLM,SamplingParams
@@ -213,6 +214,15 @@ def similarity(str1, str2, split_chars, threshold=0.3, min_proportion=0.65):
 
     return False
 
+def similarity_naive(str1,str2):
+    if str1 == str2:
+        with open("/workspace/lurui/openrlhf-mcts/data/similarity.log", "a") as f:
+            f.write(f"similarity action\n")
+    else:
+        with open("/workspace/lurui/openrlhf-mcts/data/similarity.log", "a") as f:
+            f.write(f"new action\n")
+    return str1.strip() == str2.strip()
+
 
 class MCTSNode(BaseModel):
     state: List[int]
@@ -235,6 +245,7 @@ class MCTSNode(BaseModel):
     accumulated_value: float = 0
     visited_terminal: int = 0
     repeat:bool = False
+    node_id: int = 0
 
     def add_child(self, child_node: MCTSNode):
         self.children.append(child_node)
@@ -244,11 +255,12 @@ class MCTSNode(BaseModel):
 
     def __eq__(self, other):
         if isinstance(other, MCTSNode):
-            return self.state == other.state and self.answer == other.answer
+            # return self.state == other.state and self.answer == other.answer
+            return self.node_id == other.node_id
         return False
 
     def __hash__(self):
-        return hash((self.aggregate_answer, self.answer))
+        return hash((self.node_id))
 
     def add_reward(self, reward: int):
         self.reward_samples.append(reward)
@@ -276,6 +288,7 @@ class MCTSr(BaseModel):
     excess_reward_penalty: int = 5
     max_depth: int = 40
     max_children: int = 3
+    min_children: int = 2
     pass_k: int = 4
     path_num :int = 16
     total_token_num: int = 0
@@ -295,6 +308,7 @@ class MCTSr(BaseModel):
     top_p: float = 0.9
     llms : List
     tokenize_fn :Callable 
+    detokenize_fn :Callable
 
     # Logs
     rewards: list[float] = []
@@ -316,6 +330,13 @@ class MCTSr(BaseModel):
     random_pick :bool = False
     parent_shift: bool = False
     use_orm_reward: bool = False
+    select_correct_leaf: bool = False
+    leaf_num_count: int = 1
+    use_chain_reward: bool = False
+    use_state_value_reward: bool = False
+    use_pure_RM:bool = False
+    use_pure_binary:bool = False
+    shallow_enwide: bool = False
 
     # def __init__(self, temperature, top_p, model_name, stops=None):
     #     super().__init__()
@@ -334,9 +355,24 @@ class MCTSr(BaseModel):
                     # qwen_urls=qwen_urls,
                     urls=EVALUATOR_URLS)
                 reward = result
-            value = get_qwen_remote_reward_model_value(
-                urls= RM_URLS, question = self.problem, response = node.aggregate_answer)
-            node.accumulated_value = value
+            if self.use_pure_binary:
+                print("use pure binary")
+                node.accumulated_value = reward
+            else:
+                value = get_qwen_remote_reward_model_value(
+                    urls= RM_URLS, question = self.problem, response = node.aggregate_answer)
+                if self.use_pure_RM:
+                    a = 0.5
+                    b = -2.898
+                    x = a*(value-b)
+                    result = 1/(1+math.exp(-x))
+                    print("rm_score",value, result)
+                    node.accumulated_value = result
+                else:
+                    sigmoid_value = 1 / (1 + math.exp(-value))
+                    coeff = 0.5
+                    value = reward + coeff * sigmoid_value
+                    node.accumulated_value = value
         else:
             # reward = generate_logits(
             #     urls=RM_URLS, user_query = self.problem, assistant_response = node.aggregate_answer,
@@ -371,7 +407,7 @@ class MCTSr(BaseModel):
             self.backpropagate(parent,gamma,main_chain)
     
     def leaf_backpropagate(self, node: MCTSNode):
-        if node.terminal and node.value > 0:
+        if node.terminal and node.main_chain:
             node.terminal_in_subtree += 1
             node.correct_terminal_in_subtree += 1
             # 所有父亲的terminal_in_subtree和correct_terminal_in_subtree都加1
@@ -476,7 +512,6 @@ class MCTSr(BaseModel):
 
         selected_nodes = []
         if random_pick:
-            print("random pick")
             selected_nodes = random.sample(candidates, min(k, len(candidates)))
             return selected_nodes
         else:
@@ -532,6 +567,7 @@ class MCTSr(BaseModel):
         #     raise NotImplementedError(
         #         f"Backbone {self.backbone} not implemented")
         
+        # init_prompt = self.tokenize_fn([[self.problem],[None]],self.prompt_max_len, device="cpu")
         init_prompt = self.tokenize_fn([[self.problem],[None]],self.prompt_max_len, device="cpu")["input_ids"][0]
 
         self.root = MCTSNode(
@@ -576,8 +612,8 @@ class MCTSr(BaseModel):
                     child_terminal_exits = False
                     for child in node.children:
                         is_terminated = child.terminal
-                        if is_terminated and child.value > 0:
-                            assert child.value == 1, "correct leaf reward is not 1"
+                        if is_terminated and child.R > 0:
+                            assert child.R == 1, "correct leaf reward is not 1"
                             child.main_chain = True
                             if self.backprop:
                                 self.backpropagate(child, child.main_chain)
@@ -600,8 +636,10 @@ class MCTSr(BaseModel):
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/leaves.jsonl", "a") as f:
             #输出len(self.leaves)数量即可
             f.write(json.dumps({"leaf num": len(self.leaves)}))
+            f.write("\n")
         
         if self.parent_shift:
+            self.leaf_normalize(self.leaves)
             for leaf in self.leaves:
                 self.leaf_backpropagate(leaf)
             self.select_terminal()
@@ -634,7 +672,7 @@ class MCTSr(BaseModel):
             return [], 0
         stops = get_stops()
         all_children_token_num = 0
-        max_tokens_per_step = 512
+        max_tokens_per_step = self.max_token_num
         max_attempts = 3
         token_threshold = 150
         children_map = {node: [] for node in nodes}  # 用于记录每个节点的孩子
@@ -645,13 +683,33 @@ class MCTSr(BaseModel):
 
             for node in nodes:
                 num_current_children = len(children_map[node])
-                prompts.extend([node.state] * (self.max_children - num_current_children))
-                node_prompts_map.extend([node] * (self.max_children - num_current_children))
+                prompts.extend([node.state] * (node.max_children - num_current_children))
+                node_prompts_map.extend([node] * (node.max_children - num_current_children))
 
             if not prompts:
                 break  # 如果没有需要生成的孩子，退出
 
             attempts += 1
+            
+            next_tokens = []
+            next_strs = []
+            if self.first_token_temperature and random.random() < 0.5:
+                print("using first token tempeature")
+                first_tokens = top_k_sampling(
+                    llm = self.llms[0],
+                    prompts = prompts,
+                    top_p = self.top_p,
+                    skip_special_tokens=False,
+                    stops=stops,
+                )
+                full_strs = [self.detokenize_fn(first_token) for first_token in first_tokens]
+                next_tokens = [random.choice(used_logprobs) for used_logprobs in first_tokens]
+                next_strs = [self.detokenize_fn([next_token]) for next_token in next_tokens]
+                # print("full_strs", full_strs)
+                # with open("/workspace/lurui/openrlhf-mcts/data/first_tokens.jsonl", "a") as f:
+                #     f.write(json.dumps({"prompts": prompts, "next_strs": full_strs}))
+                #     f.write("\n")
+                prompts = [prompt + [next_token] for prompt, next_token in zip(prompts, next_tokens)]
 
             responses_token, responses_str, finish_reasons, stop_tokens, token_nums = query_local_vllm_completions_ids(
                 prompts,
@@ -673,14 +731,20 @@ class MCTSr(BaseModel):
                 response = response_str_list[0]
                 finish_reason = finish_reason_list[0]
                 stop_token = stop_token_list[0]
-
+                if next_tokens:
+                    assert len(next_strs) != 0 and len(next_tokens) != 0 and len(next_strs) == len(next_tokens), "next tokens and next strs should have the same length"
+                    response = next_strs[idx] + response
+                    
+                    response_token = [next_tokens[idx]] + response_token
                 if response is None:
                     print("response is None")
                     continue  # 如果响应为空或未结束，跳过
 
                 action = response
                 if not ((stop_token is None) or (stop_token in eos_tokens_set)):
-                    action += stop_token
+                    # action += stop_token
+                    stop_token_str = self.detokenize_fn([stop_token])[0]
+                    action += stop_token_str
 
                 new_action = action
                 new_action_token = response_token
@@ -691,11 +755,17 @@ class MCTSr(BaseModel):
                     for child in children_map[node]
                 ]
 
-                if any(
-                    similarity(new_action, existing_action, split_chars=["\n\n", ". "])
-                    for existing_action in existing_actions
-                ):
-                    continue  # 如果新的动作与现有的孩子过于相似，跳过
+                # if any(
+                #     similarity(new_action, existing_action, split_chars=["\n\n", ". "])
+                #     for existing_action in existing_actions
+                # ):
+                #     continue  # 如果新的动作与现有的孩子过于相似，跳过
+
+                # if any(
+                #     similarity_naive(new_action, existing_action)
+                #     for existing_action in existing_actions
+                # ):
+                #     continue  # 如果新的动作与现有的孩子过于相似，跳过
 
                 # expanded_state = node.state + response_token
                 # expanded_state = torch.cat([node.state, response_token], dim=1)
@@ -717,7 +787,17 @@ class MCTSr(BaseModel):
                 finished = self.judge_finished(
                     if_finish, node.depth + 1
                 )
-
+                if len(new_aggregate_answer_token) > self.max_token_num:
+                    print("terminal because exceed max token num")
+                elif find_repeated_patterns(new_aggregate_answer):
+                    print("terminal because find repeated patterns")
+                elif finished:
+                    print("terminal because finished")
+                if self.shallow_enwide:
+                    print("shallow enwide")
+                    max_children = max(node.max_children/2, self.min_children)
+                else:
+                    max_children = node.max_children
                 child_node = MCTSNode(
                     state=expanded_state,
                     answer=new_action,
@@ -727,13 +807,15 @@ class MCTSr(BaseModel):
                     parent=node,
                     depth=node.depth + 1,
                     terminal=finished,
-                    max_children=self.max_children,
-                    repeat=repeat
+                    max_children=max_children,
+                    repeat=repeat,
+                    node_id = self.leaf_num_count
                 )
+                self.leaf_num_count += 1
 
                 children_map[node].append(child_node)
 
-            if all(len(children_map[node]) >= self.max_children for node in nodes):
+            if all(len(children_map[node]) >= node.max_children for node in nodes):
                 break  # 如果所有节点的孩子都生成完毕，退出
         # 输出children_map的长度之和
         # print("all childrens: ", sum(len(children) for children in children_map.values()))
@@ -768,6 +850,7 @@ class MCTSr(BaseModel):
                         childrens[i].R = reward
                         childrens[i].value = reward
 
+            assert len(childrens) <= node.max_children, f"Too many children, {len(childrens)} > {node.max_children}"
             node.max_children = len(childrens)
             node.children = childrens
 
@@ -835,15 +918,15 @@ class MCTSr(BaseModel):
                 node.accumulated_value = node.accumulated_value - mean
                 
 
-    def leaf_normalize(self):
-        leaf_correctness = [1 if leaf.correct_terminal_in_subtree > 0 else 0 for leaf in self.selected_terminals]
+    def leaf_normalize(self,nodes):
+        leaf_correctness = [leaf.accumulated_value for leaf in nodes]
         print("leaf_correctness",leaf_correctness)
         _sum = sum(leaf_correctness)
         num = len(leaf_correctness) - 1
         mean = [(_sum - leaf_correctness[i]) / num for i in range(len(leaf_correctness))]
-        for i, leaf in enumerate(self.selected_terminals):
-            leaf.accumulated_value = leaf.correct_terminal_in_subtree/leaf.terminal_in_subtree - mean[i]
-        self.normalize_backprop()
+        for i, leaf in enumerate(nodes):
+            leaf.accumulated_value = leaf.accumulated_value - mean[i]
+        # self.normalize_backprop()
 
     # def select_terminal(self):
     #     # 从self.leaves中选择self.path_num 个叶子节点, 尽可能挑选同样数量的正确和错误的叶子，同一个父亲的叶子如果同对同错，只能选一个
@@ -943,66 +1026,129 @@ class MCTSr(BaseModel):
     #         return True
 
     def select_terminal(self):
-        print("new select_terminal")
         # 从self.leaves中选择self.path_num 个叶子节点, 尽可能挑选同样数量的正确和错误的叶子，同一个父亲的叶子如果同对同错，只能选一个
         parent_to_children = {}
 
         if len(self.leaves) < 3:
             return False
         
+        correct_leaf_parent = None
+        correct_leaf = None
         for leaf in self.leaves:
+            if leaf.main_chain:
+                correct_leaf_parent = leaf.parent
+                correct_leaf = leaf
             parent = leaf.parent
             if parent not in parent_to_children.keys():
                 parent_to_children[parent] = []
             parent_to_children[parent].append(leaf)
         
         total_sum = len(parent_to_children.keys())
+        if correct_leaf_parent is not None:
+            assert correct_leaf is not None, "correct leaf is None"
+            print("got correct leaf!")
+        
+        if not self.select_correct_leaf:
+            print("do not manually select correct leaf")
+            correct_leaf = None
+            correct_leaf_parent = None
 
         if total_sum == self.path_num:
-            selected_terminals = []
-            # 为每个父节点选择一个孩子
-            for parent, children in parent_to_children.items():
-                selected_terminals.append(random.choice(children))
-            self.selected_terminals = selected_terminals
-            return True
+            if correct_leaf is None:
+                selected_terminals = []
+                # 为每个父节点选择一个孩子
+                for parent, children in parent_to_children.items():
+                    selected_terminals.append(random.choice(children))
+                self.selected_terminals = selected_terminals
+                return True
+            else:
+                selected_terminals = []
+                # 为每个父节点选择一个孩子
+                for parent, children in parent_to_children.items():
+                    if parent == correct_leaf_parent:
+                        selected_terminals.append(correct_leaf)
+                    else:
+                        selected_terminals.append(random.choice(children))
+                self.selected_terminals = selected_terminals
+                return True
 
         elif total_sum > self.path_num:
-            # 首先随机选self.path_num个父节点
-            selected_parents = random.sample(parent_to_children.keys(), self.path_num)
-            selected_terminals = []
-            for parent in selected_parents:
-                selected_terminals.append(random.choice(parent_to_children[parent]))
-            self.selected_terminals = selected_terminals
-            return True
-            
+            if correct_leaf is None:
+                # 首先随机选self.path_num个父节点
+                selected_parents = random.sample(set(parent_to_children.keys()), self.path_num)
+                selected_terminals = []
+                for parent in selected_parents:
+                    selected_terminals.append(random.choice(parent_to_children[parent]))
+                self.selected_terminals = selected_terminals
+                return True
+            else:
+                other_parents = [parent for parent in parent_to_children.keys() if parent != correct_leaf_parent]
+                selected_parents = random.sample(other_parents, self.path_num - 1)
+                selected_terminals = [correct_leaf]
+                for parent in selected_parents:
+                    selected_terminals.append(random.choice(parent_to_children[parent]))
+                self.selected_terminals = selected_terminals
+                return True     
         else:
-            selected_terminals = []
-            # 为每个父节点选择一个正确的孩子和一个错误的孩子（如果有的话）
-            for parent, children in parent_to_children.items():
-                selected_terminals.append(random.choice(children))
-            if len(selected_terminals) < self.path_num:
-                k = 0
+            if correct_leaf is None:
+                selected_terminals = []
+                # 为每个父节点选择一个正确的孩子和一个错误的孩子（如果有的话）
+                for parent, children in parent_to_children.items():
+                    selected_terminals.append(random.choice(children))
+                if len(selected_terminals) < self.path_num:
+                    k = 0
+                    while len(selected_terminals) < self.path_num:
+                        added_in_this_round = False
+                        for parent, children in parent_to_children.items():
+                            if k < len(children) and children[k] not in selected_terminals:
+                                selected_terminals.append(children[k])
+                                added_in_this_round = True
+                                if len(selected_terminals) >= self.path_num:
+                                    break     
+                        if not added_in_this_round:
+                            break  # 如果这一轮没有添加新路径，则不能继续补全
+                        k += 1
                 while len(selected_terminals) < self.path_num:
-                    added_in_this_round = False
-                    for parent, children in parent_to_children.items():
-                        if k < len(children) and children[k] not in selected_terminals:
-                            selected_terminals.append(children[k])
-                            added_in_this_round = True
-                            if len(selected_terminals) >= self.path_num:
-                                break     
-                    if not added_in_this_round:
-                        break  # 如果这一轮没有添加新路径，则不能继续补全
-                    k += 1
-            while len(selected_terminals) < self.path_num:
-                assert len(selected_terminals) > 0, "Not enough terminal nodes"
-                # 把selected_terminals shuffle一下，然后再从头开始添加
-                selected_terminals = random.shuffle(selected_terminals)
-                for node in selected_terminals:
-                    selected_terminals.append(node)
-                    if len(selected_terminals) >= self.path_num:
-                        break
-            self.selected_terminals = selected_terminals
-            return True
+                    assert len(selected_terminals) > 0, "Not enough terminal nodes"
+                    # 把selected_terminals shuffle一下，然后再从头开始添加
+                    random.shuffle(selected_terminals)
+                    for node in selected_terminals:
+                        selected_terminals.append(node)
+                        if len(selected_terminals) >= self.path_num:
+                            break
+                self.selected_terminals = selected_terminals
+                return True
+            else:
+                selected_terminals = []
+                for parent, children in parent_to_children.items():
+                    if parent == correct_leaf_parent:
+                        selected_terminals.append(correct_leaf)
+                    else:
+                        selected_terminals.append(random.choice(children))
+                if len(selected_terminals) < self.path_num:
+                    k = 0
+                    while len(selected_terminals) < self.path_num:
+                        added_in_this_round = False
+                        for parent, children in parent_to_children.items():
+                            if k < len(children) and children[k] not in selected_terminals:
+                                selected_terminals.append(children[k])
+                                added_in_this_round = True
+                                if len(selected_terminals) >= self.path_num:
+                                    break     
+                        if not added_in_this_round:
+                            break  # 如果这一轮没有添加新路径，则不能继续补全
+                        k += 1
+                while len(selected_terminals) < self.path_num:
+                    assert len(selected_terminals) > 0, "Not enough terminal nodes"
+                    # 把selected_terminals shuffle一下，然后再从头开始添加
+                    random.shuffle(selected_terminals)
+                    for node in selected_terminals:
+                        selected_terminals.append(node)
+                        if len(selected_terminals) >= self.path_num:
+                            break
+                self.selected_terminals = selected_terminals
+                return True
+
                 
 ###########################
 # Functions for saving and loading the tree
@@ -1036,6 +1182,8 @@ def convert_to_json(node: MCTSNode):
             "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
             "accumulated_value": node.accumulated_value,
             "visited_terminal": node.visited_terminal,
+            "node_id": node.node_id,
+            "max_children": node.max_children
         }
     else:
         return {
@@ -1054,6 +1202,8 @@ def convert_to_json(node: MCTSNode):
             "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
             "accumulated_value": node.accumulated_value,
             "visited_terminal": node.visited_terminal,
+            "node_id": node.node_id,
+            "max_children": node.max_children
         }
 
 
@@ -1076,10 +1226,12 @@ def chain_worker(
     init_prompt,
     prompt_key="problem",
     answer_key="golden_answer",
-    args=None
+    args=None,
+    first_token_temperature=0,
+    detokenize_fn=None,
 ):
     pass_k = args["path_num"]
-    stops = ["<|user|>","<|observation|>","<|endoftext|>"]
+    stops = [151336, 151329,151338]
     max_attempts = 3
     attempts = 0
     paths = []
@@ -1089,6 +1241,25 @@ def chain_worker(
             break  # 如果没有需要生成的孩子，退出
 
         attempts += 1
+        next_tokens = []
+        next_strs = []
+        if first_token_temperature:
+            print("using first token tempeature")
+            first_tokens = top_k_sampling(
+                llm = llm,
+                prompts = prompts,
+                top_p = self.top_p,
+                skip_special_tokens=False,
+                stops=stops,
+            )
+            full_strs = [detokenize_fn(first_token) for first_token in first_tokens]
+            next_tokens = [random.choice(used_logprobs) for used_logprobs in first_tokens]
+            next_strs = [detokenize_fn([next_token]) for next_token in next_tokens]
+            print("full_strs", full_strs)
+            # with open("/workspace/lurui/openrlhf-mcts/data/first_tokens.jsonl", "a") as f:
+            #     f.write(json.dumps({"prompts": prompts, "next_strs": full_strs}))
+            #     f.write("\n")
+            prompts = [prompt + [next_token] for prompt, next_token in zip(prompts, next_tokens)]
 
         responses_token, responses_str, finish_reasons, stop_tokens, token_nums = query_local_vllm_completions_ids(
             prompts,
@@ -1109,6 +1280,11 @@ def chain_worker(
             response = response_str_list[0]
             finish_reason = finish_reason_list[0]
             stop_token = stop_token_list[0]
+            
+            if next_tokens:
+                assert len(next_strs) != 0 and len(next_tokens) != 0 and len(next_strs) == len(next_tokens), "next tokens and next strs should have the same length"
+                response = next_strs[idx] + response
+                response_token = [next_tokens[idx]] + response_token
 
             if (attempts != max_attempts) and (response is None):
                 continue  # 如果响应为空或未结束，跳过
@@ -1139,6 +1315,7 @@ def mcts_worker(
     item,
     llm, 
     tokenize_fn,
+    detokenize_fn,
     prompt_key="problem",
     answer_key="golden_answer",
     args=None
@@ -1158,6 +1335,7 @@ def mcts_worker(
         selection_policy=SelectionPolicy.IMPORTANCE_SAMPLING,
         backbone=args["backbone"],
         max_children=args["max_children"],
+        min_children=args["min_children"],
         pass_k=args["pass_k"],
         max_depth=args["max_depth"],
         backprop=args["backprop"],
@@ -1166,6 +1344,7 @@ def mcts_worker(
         look_ahead=args["look_ahead"],
         llms=[llm],
         tokenize_fn = tokenize_fn,
+        detokenize_fn = detokenize_fn,
         concurrent_num=args["concurrent_num"],
         path_num = args["path_num"],
         prompt_max_len = args["prompt_max_len"],
@@ -1174,39 +1353,55 @@ def mcts_worker(
         step_level_norm = args["step_level_norm"],
         random_pick = args["random_pick"],
         parent_shift = args["parent_shift"],
-        use_orm_reward = args["use_orm_reward"]
+        use_orm_reward = args["use_orm_reward"],
+        select_correct_leaf = args["select_correct_leaf"],
+        use_chain_reward = args["use_chain_reward"],
+        use_state_value_reward = args["use_state_value_reward"],
+        use_pure_RM = args["use_pure_RM"],
+        use_pure_binary = args["use_pure_binary"],
+        shallow_enwide = args["shallow_enwide"],
     )
     # print(mcts.max_children)
     start_time = time.time()
+    mcts.run()
     try:
-        mcts.run()
+        # mcts.run()
         root = mcts.root
         # with open("/workspace/lurui/openrlhf-glm/logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
-        # # with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
+        # with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
         #     tree_json = convert_to_json(root)
         #     tree_json["random_pick"] = args["random_pick"]
         #     # tree_json["time_used"] = time_used
         #     json.dump(tree_json, f)
         #     f.write("\n")
         # print("selected_terminals",mcts.selected_terminals[0])
-        paths = gather_paths(mcts.selected_terminals,args["path_num"],mcts.parent_shift,mcts.use_orm_reward)
+        paths = gather_paths(mcts.selected_terminals,args["path_num"],parent_shift = mcts.parent_shift,use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward)
         time_used = time.time() - start_time
+        pass_num = pass_rate(paths)
         os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs", exist_ok=True)
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
         # with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
             tree_json = convert_to_json(root)
             tree_json["random_pick"] = args["random_pick"]
             tree_json["time_used"] = time_used
+            tree_json["args"] = args
+            tree_json["total_nodes"] = mcts.leaf_num_count
+            tree_json["total_token_num"] = mcts.total_token_num
+            tree_json["pass_num"] = pass_num
             json.dump(tree_json, f)
             f.write("\n")
     except Exception as e:
-        print(f"Error in MCTS: {e}")
+        # print(f"Error in MCTS: {e}")
+        os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs", exist_ok=True)
+        with open("/workspace/lurui/openrlhf-glm/logs/outputs/error.log", "a") as f:
+            f.write(f"Error in MCTS: {e}")
         paths = None
         time_used = time.time() - start_time
     if paths is None:
         os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs", exist_ok=True)
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/response_type.jsonl", "a",encoding="utf-8") as f:
             f.write("use chain_worker\n")
+        # init_prompt = tokenize_fn([[problem],[None]],args["prompt_max_len"], device="cpu")
         init_prompt = tokenize_fn([[problem],[None]],args["prompt_max_len"], device="cpu")["input_ids"][0].tolist()
         paths = chain_worker(item, llm, init_prompt, prompt_key, answer_key, args)
         return paths, init_prompt
@@ -1215,23 +1410,10 @@ def mcts_worker(
             f.write("use mcts_worker\n")
         return paths,root.state
 
+# def get_stops():
+#     return ["<|user|>", "<|endoftext|>", "<|observation|>","\n\n"]
 def get_stops():
-    return ["<|user|>", "<|endoftext|>", "<|observation|>","\n\n"]
-
-def normalize_all_paths(paths):
-    # 对所有路径进行归一化
-    all_values = []
-    for path in paths:
-        all_values+=[node["value"] for node in path]
-    print("all_values",len(all_values))
-    _sum = sum(all_values)
-    num = len(all_values) - 1
-    print("mean",_sum/num+1)
-    for path in paths:
-        for node in path:
-            node["value"] = node["value"] - ((_sum - node["value"]) / num)
-            # node["value"] = node["value"] - (_sum/num+1)
-    return paths
+    return [271, 151336, 151329,151338, 2533, 382, 1447, 21467, 692]
 
 def normalize_selected_terminals(selected_terminals: list[MCTSNode]):
     leaf_orm_value = [leaf.accumulated_value for leaf in selected_terminals]
@@ -1245,25 +1427,62 @@ def fill_in_paths(paths):
     # 对于每个路径，如果存在"value"=0，就用他的前一个节点的"value"填充
     for path in paths:
         for i in range(1,len(path)):
-            if path[i]["value"] == 0:
+            epsilon = 1e-8
+            if abs(path[i]["value"]) < epsilon: 
+            # if path[i]["value"] == 0:
                 assert i > 0, "value=0 in the first node"
+                assert path[i]["value"] < epsilon  and path[i]["value"] > -epsilon, "value is not 0"
+                # print("fill in value",path[i-1]["value"])
                 path[i]["value"] = path[i-1]["value"]
     return paths
 
+def normalize_all_paths(paths,step_level_norm = False):
+    # 对所有路径进行归一化
+    if step_level_norm:
+        state_value_sum = 0
+        state_value_num = 0
+        for path in paths:
+            for node in path:
+                state_value_sum += node["state_value"]
+                state_value_num += 1
+        if state_value_num == 0:
+            mean = 0
+        else:
+            mean = state_value_sum/state_value_num
+        for path in paths:
+            for node in path:
+                node["state_value"] = node["state_value"] - mean
+        return paths
+    else:
+        state_value_sum = 0
+        state_value_num = 0
+        for path in paths:
+            for node in path:
+                state_value_sum += node["state_value"]*len(node["token_answer"])
+                state_value_num += len(node["token_answer"])
+        if state_value_num == 0:
+            mean = 0
+        else:
+            mean = state_value_sum/state_value_num
+        for path in paths:
+            for node in path:
+                node["state_value"] = node["state_value"] - mean
+        return paths
+
 def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dict[str, Any]]:
     if parent_shift:
-        print(" use parent shift")
         path = []
         while node.parent is not None:
             parent_value = node.parent.accumulated_value/node.parent.terminal_in_subtree
             child_value = node.accumulated_value/node.terminal_in_subtree
+            if node.terminal:
+                assert node.terminal_in_subtree == 1, "terminal_in_subtree is not 1"
             # print("pass_ratio",parent_value,child_value)
-            path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value - parent_value})
+            path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value - parent_value,"state_value":child_value})
             # path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value})
             node = node.parent
         return path[::-1]
     else:
-        print("not use parent shift")
         path = []
         while node is not None:
             print("pass_ratio",node.correct_terminal_in_subtree,node.terminal_in_subtree,node.accumulated_value)
@@ -1271,23 +1490,47 @@ def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dic
             node = node.parent
         return path[::-1][1:]
 
-def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False) -> List[List[Dict[str, Any]]]:
+def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False) -> List[List[Dict[str, Any]]]:
     paths = []
     if len(selected_terminals) < pass_k:
         return None
-    terminal_values = normalize_selected_terminals(selected_terminals)
+    # terminal_values = normalize_selected_terminals(selected_terminals)
+    terminal_values = [leaf.accumulated_value for leaf in selected_terminals]
     # 添加 selected_terminal 的叶子节点路径
     for terminal_node in selected_terminals:
         paths.append(path_from_root_to_node(terminal_node,parent_shift))
     assert len(paths) == pass_k, f"Failed to generate {pass_k} paths,{len(paths)} instead"
     paths = fill_in_paths(paths)
-    if use_orm_reward:
+    if use_chain_reward:
+        print("use chain reward in mcts!!")
+        terminal_values = normalize_selected_terminals(selected_terminals)
+        for path in paths:
+            for node in path:
+                node["value"] = terminal_values[paths.index(path)]
+    elif use_orm_reward:
         print("use orm reward in mcts!!")
+        terminal_values = normalize_selected_terminals(selected_terminals)
         for path in paths:
             for node in path:
                 node["value"] = (node["value"] + terminal_values[paths.index(path)])/2
+    elif use_state_value_reward:
+        print("use state value reward in mcts!!")
+        # paths = normalize_all_paths(paths,step_level_norm)
+        for path in paths:
+            for node in path:
+                node["value"] = (node["value"] + node["state_value"])/2
+    else:
+        print("use pure advantage in mcts!!")
+    print("path num",len(paths))
     return paths
 
+def pass_rate(paths):
+    pass_num = 0
+    for path in paths:
+        if path[-1]["pass_ratio"] ==1 :
+            pass_num += 1
+    return pass_num
+
 # 封装为一个函数,输入为item,输出为paths
-def parallel_mcts(item, llm, tokenize_fn, args):
-    return mcts_worker(item, llm, tokenize_fn, args["prompt_key"], args["answer_key"], args)
+def parallel_mcts(item, llm, tokenize_fn, detokenize_fn, args):
+    return mcts_worker(item, llm, tokenize_fn, detokenize_fn, args["prompt_key"], args["answer_key"], args)

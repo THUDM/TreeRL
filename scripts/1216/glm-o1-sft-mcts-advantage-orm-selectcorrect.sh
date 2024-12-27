@@ -14,7 +14,7 @@ set -x
 NUM_TRACE=16
 KL=0
 
-TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-advantage-plus-orm-closesimilaritycheck-filtersame-1plus05-fixedge
+TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-advantage-plus-orm-selectcorrect
 SAVE_DIR=/workspace/lurui/openrlhf-glm/checkpoints/reinforce/$TAG
 mkdir -p $SAVE_DIR
 
@@ -44,9 +44,9 @@ ray job submit --address="http://127.0.0.1:8265" \
     --ref_num_gpus_per_node 8 \
     --reward_num_nodes 0 \
     --reward_num_gpus_per_node 8 \
-    --actor_num_nodes 2 \
+    --actor_num_nodes 1 \
     --actor_num_gpus_per_node 8 \
-    --vllm_num_engines 16 \
+    --vllm_num_engines 8 \
     --vllm_tensor_parallel_size 1 \
     --pretrain /workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381 \
     --reward_pretrain /workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381 \
@@ -63,10 +63,10 @@ ray job submit --address="http://127.0.0.1:8265" \
     --generate_max_len 4096 \
     --zero_stage 2 \
     --bf16 \
-    --actor_learning_rate 4e-6 \
+    --actor_learning_rate 1.5e-6 \
     --lr_scheduler_type cosine \
     --min_actor_learning_rate_lr 1 \
-    --l2 0 \
+    --l2 0.1 \
     --init_kl_coef $KL \
     --prompt_data $DATASETS \
     --max_samples 300000 \
@@ -86,7 +86,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --source_key data_type \
     --remote_rm_url /workspace/lurui/openrlhf-glm/examples/tools/rm_urls.json \
     --normalize_reward_from_multi_traces_with_rloo \
-    --wandb_project openrlhf_code_rl \
+    --wandb_project openrlhf_math_mcts \
     --use_mcts \
     --process_supervision \
     --mask_repeated_samples \
@@ -96,6 +96,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --random_pick \
     --parent_shift \
     --use_orm_reward \
+    --select_correct_leaf \
     # --use_general_reward_for_stem \
     # --use_rule_based_reward \
     # --mask_repeated_samples \

@@ -11,10 +11,10 @@ set -x
 
 # ray start --head --node-ip-address 0.0.0.0 --num-gpus 8
 
-NUM_TRACE=16
-KL=0
+NUM_TRACE=32
+KL=0.0001
 
-TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-advantage-plus-orm-closesimilaritycheck-filtersame-1plus05-fixedge
+TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-pureRM-advantage-value-firsttokentemp-rmsigmoid
 SAVE_DIR=/workspace/lurui/openrlhf-glm/checkpoints/reinforce/$TAG
 mkdir -p $SAVE_DIR
 
@@ -63,10 +63,10 @@ ray job submit --address="http://127.0.0.1:8265" \
     --generate_max_len 4096 \
     --zero_stage 2 \
     --bf16 \
-    --actor_learning_rate 4e-6 \
+    --actor_learning_rate 2e-6 \
     --lr_scheduler_type cosine \
     --min_actor_learning_rate_lr 1 \
-    --l2 0 \
+    --l2 0.1 \
     --init_kl_coef $KL \
     --prompt_data $DATASETS \
     --max_samples 300000 \
@@ -86,7 +86,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --source_key data_type \
     --remote_rm_url /workspace/lurui/openrlhf-glm/examples/tools/rm_urls.json \
     --normalize_reward_from_multi_traces_with_rloo \
-    --wandb_project openrlhf_code_rl \
+    --wandb_project openrlhf_math_mcts \
     --use_mcts \
     --process_supervision \
     --mask_repeated_samples \
@@ -95,7 +95,10 @@ ray job submit --address="http://127.0.0.1:8265" \
     --max_time_use 360 \
     --random_pick \
     --parent_shift \
-    --use_orm_reward \
+    --use_state_value_reward \
+    --use_pure_RM \
+    --select_correct_leaf \
+    --first_token_temperature 1 \
     # --use_general_reward_for_stem \
     # --use_rule_based_reward \
     # --mask_repeated_samples \

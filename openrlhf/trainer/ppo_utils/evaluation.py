@@ -281,8 +281,6 @@ def extract_answer(
         if len(answer) == 0:
             answer = re.findall(
                 r'\\boxed\{([^{}]*(?:\{[^{}]*\})*[^{}]*)\}', resp_text)
-    elif "### Final Answer" in resp_text:
-        answer = re.findall(r'<answer>([^<>]*)', resp_text)
 
     if answer:
         answer = answer[0].strip()
@@ -292,30 +290,37 @@ def extract_answer(
         # answer =
         answer_template = EXTRACTION_TEMPLATE.format(
             question=question, answer=resp_text)
-        # if "sglang" in backbone:
-        #     extracted_answer = query_sglang_chat(prompt = answer_template, urls=urls)
-        # else:
-        #     url = random.choice(urls)
-        #     extracted_answer = query_chatglm_platform(
-        #         answer_template, url=url
-        #         )
-        extracted_answer = query_sglang_chat(
-            prompt=answer_template, urls=qwen_urls, temperature=0.0, top_p=0.5)
-        if extracted_answer is None:
-            answer = ""
-        else:
-            answer = extracted_answer.replace("<ANSWER>: ", "").strip()
+        for _ in range(6):
+            # if "sglang" in backbone:
+            #     extracted_answer = query_sglang_chat(prompt = answer_template, urls=urls)
+            # else:
+            #     url = random.choice(urls)
+            #     extracted_answer = query_chatglm_platform(
+            #         answer_template, url=url
+            #         )
+            extracted_answer = query_sglang_chat(
+                prompt=answer_template, urls=qwen_urls, temperature=0.0, top_p=0.5)
+            if extracted_answer is None:
+                answer = ""
+                continue
+            else:
+                answer = extracted_answer.replace("<ANSWER>: ", "").strip()
+                break
 
     return answer
 
 
 def check_equality(expr1: str, expr2: str, urls):
     prompt = EQUALITY_TEMPLATE % {"expression1": expr1, "expression2": expr2}
-    response = query_sglang_chat(prompt, urls)
-    if isinstance(response, str):
-        return "yes" in response.lower().strip()
-    else:
+    for _ in range(3):
+        response = query_sglang_chat(prompt, urls)
+        if len(response) == 0:
+            continue
+        else:
+            break
+    if len(response) == 0:
         return 0
+    return response.lower().strip() == "yes"
 
 
 def check_result(
@@ -325,11 +330,15 @@ def check_result(
     # qwen_urls,
     urls
 ):
+    if response == "":
+        return None, 0
     answer = extract_answer(question, response, urls)
     if answer is None:
         return None, 0
     check = check_equality(answer, label, urls=urls)
-    # print("===",check,"===",answer,label)
+    print("===",check,"===",answer,label)
+    with open("/workspace/lurui/openrlhf-glm/logs/outputs/checker_mcts.jsonl", "a") as f:
+        f.write(json.dumps({"question":question,"response":response, "extracted_answer": answer, "label": label,"check": check}) + "\n")
     return answer, 1 if check else 0
 
 
@@ -403,7 +412,7 @@ def query_local_vllm_completions_ids(
         max_tokens=max_tokens,
         min_tokens = min_tokens,
         skip_special_tokens = skip_special_tokens,
-        stop = stops,
+        stop_token_ids = stops,
         # seed = random.randint(0, 100000),
         n = n,
     )
@@ -433,7 +442,8 @@ def query_local_vllm_completions_ids(
             sleep_time = 2 * try_counter + 1
             if sleep_time > 30:
                 exit(1)
-            print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
+            with open("/workspace/lurui/openrlhf-glm/logs/outputs/error.log", "a") as f:
+                f.write(f"Error: {str(e)}, sleeping for {sleep_time} seconds\n")
             time.sleep(sleep_time)
     
     return None, None, None, None, None
@@ -608,7 +618,7 @@ def generate_logits(urls, user_query, assistant_response):
 #     return -10
 
 def apply_chat_template_qwen(system_prompt, user, assistant):
-    return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>\n"
+    return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>"
 
 
 def get_qwen_remote_reward_model_value(urls, question, response):
@@ -695,3 +705,36 @@ def query_tgi_get_first_token(prompt, urls):
         first_token_list = list(set(first_token_list))
         return first_token_list
 
+def top_k_sampling(llm, prompts,stops = None,skip_special_tokens=True,top_p=0.9):
+        # _prompts = [prompt.strip() + prefix_text for prompt in prompts[0]]
+        # prompts = [_prompts, prompts[1]]
+        # prompt_token_ids = [tokenize_fn([[prompt]], 1024, device="cpu") for prompt in prompts]
+        prompt_token_ids = prompts
+        sampling_params = SamplingParams(
+            logprobs=4,
+            max_tokens=1,
+            temperature=5,
+            top_k=16,
+            min_p=0,
+            skip_special_tokens=skip_special_tokens,
+            stop_token_ids=stops,
+            top_p=top_p,
+            min_tokens=0
+        )
+        input_ids_with_next_token = []
+        # outputs = ray.get(vllm_engine.generate.remote(sampling_params=params, prompt_token_ids=prompt_token_ids))
+        # print(prompt_token_ids)
+        # outputs = llm.generate(prompt_token_ids = prompt_token_ids, sampling_params = sampling_params)
+        outputs = ray.get(llm.generate.remote(prompt_token_ids = prompt_token_ids, sampling_params = sampling_params))
+        # print(outputs)
+        first_tokens_lists = []
+        for prompt_id, output in zip(prompt_token_ids, outputs):
+            for out in output.outputs:
+                logprobs = out.logprobs[0]
+                used_logprobs = [k for k, v in logprobs.items() if v.logprob > -10]
+                if len(used_logprobs) == 0:
+                    used_logprobs = [k for k in logprobs.keys()]
+                first_tokens_lists.append(used_logprobs)
+        return first_tokens_lists
+# input_ids_with_next_token = top_k_sampling(llm, ["What is 1+1?", "What is 2+2?"])
+# print(input_ids_with_next_token)
