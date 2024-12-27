@@ -4,6 +4,9 @@ export MODEL_PATH=$1
 export MODEL_NAME=$2
 # -------- parameter --------
 
+source /workspace/lurui/miniconda3/etc/profile.d/conda.sh 
+conda activate vllm
+
 echo "up model"
 for i in {0..7}
 do

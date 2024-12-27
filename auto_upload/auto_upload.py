@@ -41,7 +41,8 @@ def upload_results_to_wandb(
         step_path = os.path.join(base_path, step_dir, "simple_evals")
         if os.path.isdir(step_path):
             for json_file in os.listdir(step_path):
-                if json_file.endswith('average.json'):
+                # if json_file.endswith('average.json'):
+                if json_file.endswith('json'):
                     dataset_name = os.path.splitext(json_file)[0]
                     results_path = os.path.join(step_path, json_file)
                     if os.path.exists(results_path):

@@ -315,6 +315,7 @@ class MCTSr(BaseModel):
     step_level_norm: bool = True
     random_pick :bool = False
     parent_shift: bool = False
+    use_orm_reward: bool = False
 
     # def __init__(self, temperature, top_p, model_name, stops=None):
     #     super().__init__()
@@ -1172,7 +1173,8 @@ def mcts_worker(
         max_time_use = args["max_time_use"],
         step_level_norm = args["step_level_norm"],
         random_pick = args["random_pick"],
-        parent_shift = args["parent_shift"]
+        parent_shift = args["parent_shift"],
+        use_orm_reward = args["use_orm_reward"]
     )
     # print(mcts.max_children)
     start_time = time.time()
@@ -1187,7 +1189,7 @@ def mcts_worker(
         #     json.dump(tree_json, f)
         #     f.write("\n")
         # print("selected_terminals",mcts.selected_terminals[0])
-        paths = gather_paths(mcts.selected_terminals,args["path_num"],mcts.parent_shift)
+        paths = gather_paths(mcts.selected_terminals,args["path_num"],mcts.parent_shift,mcts.use_orm_reward)
         time_used = time.time() - start_time
         os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs", exist_ok=True)
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
@@ -1269,7 +1271,7 @@ def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dic
             node = node.parent
         return path[::-1][1:]
 
-def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False) -> List[List[Dict[str, Any]]]:
+def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False) -> List[List[Dict[str, Any]]]:
     paths = []
     if len(selected_terminals) < pass_k:
         return None
@@ -1279,9 +1281,11 @@ def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bo
         paths.append(path_from_root_to_node(terminal_node,parent_shift))
     assert len(paths) == pass_k, f"Failed to generate {pass_k} paths,{len(paths)} instead"
     paths = fill_in_paths(paths)
-    # for path in paths:
-    #     for node in path:
-    #         node["value"] = (node["value"] + terminal_values[paths.index(path)])/2
+    if use_orm_reward:
+        print("use orm reward in mcts!!")
+        for path in paths:
+            for node in path:
+                node["value"] = (node["value"] + terminal_values[paths.index(path)])/2
     return paths
 
 # 封装为一个函数,输入为item,输出为paths

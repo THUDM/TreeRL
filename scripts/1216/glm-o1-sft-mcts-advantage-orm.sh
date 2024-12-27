@@ -14,7 +14,7 @@ set -x
 NUM_TRACE=16
 KL=0.0001
 
-TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-advantage
+TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-advantage-plus-orm
 SAVE_DIR=/workspace/lurui/openrlhf-glm/checkpoints/reinforce/$TAG
 mkdir -p $SAVE_DIR
 
@@ -27,7 +27,7 @@ mkdir -p $SAVE_DIR
 # "
 
 DATASETS="
-    /workspace/lurui/openrlhf-glm/datasets/train_30k.jsonl,1
+    /workspace/lurui/openrlhf-glm-data/train_30k.jsonl,1
 "
 
 ray job submit --address="http://127.0.0.1:8265" \
@@ -46,10 +46,10 @@ ray job submit --address="http://127.0.0.1:8265" \
     --reward_num_gpus_per_node 8 \
     --actor_num_nodes 2 \
     --actor_num_gpus_per_node 8 \
-    --vllm_num_engines 8 \
+    --vllm_num_engines 16 \
     --vllm_tensor_parallel_size 1 \
-    --pretrain /workspace/reason_data/checkpoint/glm-o1-2w-sft \
-    --reward_pretrain /workspace/reason_data/checkpoint/glm-o1-2w-sft \
+    --pretrain /workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381 \
+    --reward_pretrain /workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381 \
     --save_path $SAVE_DIR \
     --ckpt_path $SAVE_DIR \
     --micro_train_batch_size 1 \
@@ -95,6 +95,7 @@ ray job submit --address="http://127.0.0.1:8265" \
     --max_time_use 360 \
     --random_pick \
     --parent_shift \
+    --use_orm_reward \
     # --use_general_reward_for_stem \
     # --use_rule_based_reward \
     # --mask_repeated_samples \
