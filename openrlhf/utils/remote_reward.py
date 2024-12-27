@@ -288,6 +288,14 @@ def get_stem_eval(
     remote_stem_urls = remote_urls["math_checker"]
     
     extracted_answer, raw_remote_reward = check_result(remote_stem_urls, (query, response, label))
+    with open("/workspace/lurui/openrlhf-glm/logs/outputs/checker_chain.jsonl", "a") as f:
+        f.write(json.dumps({
+            "question": query,
+            "response": response,
+            "label": label,
+            "extracted_answer": extracted_answer,
+            "raw_remote_reward": raw_remote_reward,
+        }) + "\n")
     # raw_remote_rewards = raw_remote_rewards.to(torch.cuda.current_device())
     binary_reward = raw_remote_reward
     assert binary_reward in (0, 1), f"binary_reward={binary_reward}"
@@ -309,6 +317,8 @@ def get_stem_eval(
         _rm_based_reward = get_qwen_remote_reward_model_value(remote_model_urls, query, response)
         raw_remote_reward = _rm_based_reward
         # print(f"stem_remote_reward={_rm_based_reward}")
+    else:
+        print("use binary reward only")
 
     if use_rule_based_reward and not is_overlong:
         if binary_reward == 0:

@@ -290,30 +290,37 @@ def extract_answer(
         # answer =
         answer_template = EXTRACTION_TEMPLATE.format(
             question=question, answer=resp_text)
-        # if "sglang" in backbone:
-        #     extracted_answer = query_sglang_chat(prompt = answer_template, urls=urls)
-        # else:
-        #     url = random.choice(urls)
-        #     extracted_answer = query_chatglm_platform(
-        #         answer_template, url=url
-        #         )
-        extracted_answer = query_sglang_chat(
-            prompt=answer_template, urls=qwen_urls, temperature=0.0, top_p=0.5)
-        if extracted_answer is None:
-            answer = ""
-        else:
-            answer = extracted_answer.replace("<ANSWER>: ", "").strip()
+        for _ in range(6):
+            # if "sglang" in backbone:
+            #     extracted_answer = query_sglang_chat(prompt = answer_template, urls=urls)
+            # else:
+            #     url = random.choice(urls)
+            #     extracted_answer = query_chatglm_platform(
+            #         answer_template, url=url
+            #         )
+            extracted_answer = query_sglang_chat(
+                prompt=answer_template, urls=qwen_urls, temperature=0.0, top_p=0.5)
+            if extracted_answer is None:
+                answer = ""
+                continue
+            else:
+                answer = extracted_answer.replace("<ANSWER>: ", "").strip()
+                break
 
     return answer
 
 
 def check_equality(expr1: str, expr2: str, urls):
     prompt = EQUALITY_TEMPLATE % {"expression1": expr1, "expression2": expr2}
-    response = query_sglang_chat(prompt, urls)
-    if isinstance(response, str):
-        return response.lower().strip() == "yes"
-    else:
+    for _ in range(3):
+        response = query_sglang_chat(prompt, urls)
+        if len(response) == 0:
+            continue
+        else:
+            break
+    if len(response) == 0:
         return 0
+    return response.lower().strip() == "yes"
 
 
 def check_result(
@@ -323,11 +330,15 @@ def check_result(
     # qwen_urls,
     urls
 ):
+    if response == "":
+        return None, 0
     answer = extract_answer(question, response, urls)
     if answer is None:
         return None, 0
     check = check_equality(answer, label, urls=urls)
     print("===",check,"===",answer,label)
+    with open("/workspace/lurui/openrlhf-glm/logs/outputs/checker_mcts.jsonl", "a") as f:
+        f.write(json.dumps({"question":question,"response":response, "extracted_answer": answer, "label": label,"check": check}) + "\n")
     return answer, 1 if check else 0
 
 
@@ -712,10 +723,10 @@ def top_k_sampling(llm, prompts,stops = None,skip_special_tokens=True,top_p=0.9)
         )
         input_ids_with_next_token = []
         # outputs = ray.get(vllm_engine.generate.remote(sampling_params=params, prompt_token_ids=prompt_token_ids))
-        print(prompt_token_ids)
+        # print(prompt_token_ids)
         # outputs = llm.generate(prompt_token_ids = prompt_token_ids, sampling_params = sampling_params)
         outputs = ray.get(llm.generate.remote(prompt_token_ids = prompt_token_ids, sampling_params = sampling_params))
-        print(outputs)
+        # print(outputs)
         first_tokens_lists = []
         for prompt_id, output in zip(prompt_token_ids, outputs):
             for out in output.outputs:

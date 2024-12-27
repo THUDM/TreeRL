@@ -335,6 +335,7 @@ class MCTSr(BaseModel):
     use_chain_reward: bool = False
     use_state_value_reward: bool = False
     use_pure_RM:bool = False
+    use_pure_binary:bool = False
     shallow_enwide: bool = False
 
     # def __init__(self, temperature, top_p, model_name, stops=None):
@@ -354,15 +355,24 @@ class MCTSr(BaseModel):
                     # qwen_urls=qwen_urls,
                     urls=EVALUATOR_URLS)
                 reward = result
-            value = get_qwen_remote_reward_model_value(
-                urls= RM_URLS, question = self.problem, response = node.aggregate_answer)
-            if self.use_pure_RM:
-                node.accumulated_value = value
+            if self.use_pure_binary:
+                print("use pure binary")
+                node.accumulated_value = reward
             else:
-                sigmoid_value = 1 / (1 + math.exp(-value))
-                coeff = 0.5
-                value = reward + coeff * sigmoid_value
-                node.accumulated_value = value
+                value = get_qwen_remote_reward_model_value(
+                    urls= RM_URLS, question = self.problem, response = node.aggregate_answer)
+                if self.use_pure_RM:
+                    a = 0.5
+                    b = -2.898
+                    x = a*(value-b)
+                    result = 1/(1+math.exp(-x))
+                    print("rm_score",value, result)
+                    node.accumulated_value = result
+                else:
+                    sigmoid_value = 1 / (1 + math.exp(-value))
+                    coeff = 0.5
+                    value = reward + coeff * sigmoid_value
+                    node.accumulated_value = value
         else:
             # reward = generate_logits(
             #     urls=RM_URLS, user_query = self.problem, assistant_response = node.aggregate_answer,
@@ -397,7 +407,7 @@ class MCTSr(BaseModel):
             self.backpropagate(parent,gamma,main_chain)
     
     def leaf_backpropagate(self, node: MCTSNode):
-        if node.terminal and node.value > 0:
+        if node.terminal and node.main_chain:
             node.terminal_in_subtree += 1
             node.correct_terminal_in_subtree += 1
             # 所有父亲的terminal_in_subtree和correct_terminal_in_subtree都加1
@@ -602,8 +612,8 @@ class MCTSr(BaseModel):
                     child_terminal_exits = False
                     for child in node.children:
                         is_terminated = child.terminal
-                        if is_terminated and child.value > 0:
-                            assert child.value == 1, "correct leaf reward is not 1"
+                        if is_terminated and child.R > 0:
+                            assert child.R == 1, "correct leaf reward is not 1"
                             child.main_chain = True
                             if self.backprop:
                                 self.backpropagate(child, child.main_chain)
@@ -629,6 +639,7 @@ class MCTSr(BaseModel):
             f.write("\n")
         
         if self.parent_shift:
+            self.leaf_normalize(self.leaves)
             for leaf in self.leaves:
                 self.leaf_backpropagate(leaf)
             self.select_terminal()
@@ -694,7 +705,7 @@ class MCTSr(BaseModel):
                 full_strs = [self.detokenize_fn(first_token) for first_token in first_tokens]
                 next_tokens = [random.choice(used_logprobs) for used_logprobs in first_tokens]
                 next_strs = [self.detokenize_fn([next_token]) for next_token in next_tokens]
-                print("full_strs", full_strs)
+                # print("full_strs", full_strs)
                 # with open("/workspace/lurui/openrlhf-mcts/data/first_tokens.jsonl", "a") as f:
                 #     f.write(json.dumps({"prompts": prompts, "next_strs": full_strs}))
                 #     f.write("\n")
@@ -782,7 +793,6 @@ class MCTSr(BaseModel):
                     print("terminal because find repeated patterns")
                 elif finished:
                     print("terminal because finished")
-                print(node.max_children)
                 if self.shallow_enwide:
                     print("shallow enwide")
                     max_children = max(node.max_children/2, self.min_children)
@@ -908,15 +918,15 @@ class MCTSr(BaseModel):
                 node.accumulated_value = node.accumulated_value - mean
                 
 
-    def leaf_normalize(self):
-        leaf_correctness = [1 if leaf.correct_terminal_in_subtree > 0 else 0 for leaf in self.selected_terminals]
+    def leaf_normalize(self,nodes):
+        leaf_correctness = [leaf.accumulated_value for leaf in nodes]
         print("leaf_correctness",leaf_correctness)
         _sum = sum(leaf_correctness)
         num = len(leaf_correctness) - 1
         mean = [(_sum - leaf_correctness[i]) / num for i in range(len(leaf_correctness))]
-        for i, leaf in enumerate(self.selected_terminals):
-            leaf.accumulated_value = leaf.correct_terminal_in_subtree/leaf.terminal_in_subtree - mean[i]
-        self.normalize_backprop()
+        for i, leaf in enumerate(nodes):
+            leaf.accumulated_value = leaf.accumulated_value - mean[i]
+        # self.normalize_backprop()
 
     # def select_terminal(self):
     #     # 从self.leaves中选择self.path_num 个叶子节点, 尽可能挑选同样数量的正确和错误的叶子，同一个父亲的叶子如果同对同错，只能选一个
@@ -1348,6 +1358,7 @@ def mcts_worker(
         use_chain_reward = args["use_chain_reward"],
         use_state_value_reward = args["use_state_value_reward"],
         use_pure_RM = args["use_pure_RM"],
+        use_pure_binary = args["use_pure_binary"],
         shallow_enwide = args["shallow_enwide"],
     )
     # print(mcts.max_children)
@@ -1357,12 +1368,12 @@ def mcts_worker(
         # mcts.run()
         root = mcts.root
         # with open("/workspace/lurui/openrlhf-glm/logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
-        with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
-            tree_json = convert_to_json(root)
-            tree_json["random_pick"] = args["random_pick"]
-            # tree_json["time_used"] = time_used
-            json.dump(tree_json, f)
-            f.write("\n")
+        # with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
+        #     tree_json = convert_to_json(root)
+        #     tree_json["random_pick"] = args["random_pick"]
+        #     # tree_json["time_used"] = time_used
+        #     json.dump(tree_json, f)
+        #     f.write("\n")
         # print("selected_terminals",mcts.selected_terminals[0])
         paths = gather_paths(mcts.selected_terminals,args["path_num"],parent_shift = mcts.parent_shift,use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward)
         time_used = time.time() - start_time
@@ -1403,21 +1414,6 @@ def mcts_worker(
 #     return ["<|user|>", "<|endoftext|>", "<|observation|>","\n\n"]
 def get_stops():
     return [271, 151336, 151329,151338, 2533, 382, 1447, 21467, 692]
-
-def normalize_all_paths(paths):
-    # 对所有路径进行归一化
-    all_values = []
-    for path in paths:
-        all_values+=[node["value"] for node in path]
-    print("all_values",len(all_values))
-    _sum = sum(all_values)
-    num = len(all_values) - 1
-    print("mean",_sum/num+1)
-    for path in paths:
-        for node in path:
-            node["value"] = node["value"] - ((_sum - node["value"]) / num)
-            # node["value"] = node["value"] - (_sum/num+1)
-    return paths
 
 def normalize_selected_terminals(selected_terminals: list[MCTSNode]):
     leaf_orm_value = [leaf.accumulated_value for leaf in selected_terminals]
@@ -1498,7 +1494,8 @@ def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bo
     paths = []
     if len(selected_terminals) < pass_k:
         return None
-    terminal_values = normalize_selected_terminals(selected_terminals)
+    # terminal_values = normalize_selected_terminals(selected_terminals)
+    terminal_values = [leaf.accumulated_value for leaf in selected_terminals]
     # 添加 selected_terminal 的叶子节点路径
     for terminal_node in selected_terminals:
         paths.append(path_from_root_to_node(terminal_node,parent_shift))
@@ -1506,20 +1503,24 @@ def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bo
     paths = fill_in_paths(paths)
     if use_chain_reward:
         print("use chain reward in mcts!!")
+        terminal_values = normalize_selected_terminals(selected_terminals)
         for path in paths:
             for node in path:
                 node["value"] = terminal_values[paths.index(path)]
     elif use_orm_reward:
         print("use orm reward in mcts!!")
+        terminal_values = normalize_selected_terminals(selected_terminals)
         for path in paths:
             for node in path:
                 node["value"] = (node["value"] + terminal_values[paths.index(path)])/2
     elif use_state_value_reward:
         print("use state value reward in mcts!!")
-        paths = normalize_all_paths(paths,step_level_norm)
+        # paths = normalize_all_paths(paths,step_level_norm)
         for path in paths:
             for node in path:
                 node["value"] = (node["value"] + node["state_value"])/2
+    else:
+        print("use pure advantage in mcts!!")
     print("path num",len(paths))
     return paths
 

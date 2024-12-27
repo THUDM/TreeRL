@@ -353,6 +353,7 @@ class ActorModelRayActor(BasePPORole):
             use_state_value_reward = args.use_state_value_reward,
             use_pure_RM = args.use_pure_RM,
             first_token_temperature = args.first_token_temperature,
+            use_pure_binary = args.use_pure_binary,
         )
 
         trainer.fit(self.prompts_dataloader, self.pretrain_dataloader, args)

@@ -14,7 +14,7 @@ set -x
 NUM_TRACE=32
 KL=0.0001
 
-TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-pureRM-chainonly-firsttokentemp
+TAG=RLOO-glm9b-o1sft-model-ms${NUM_TRACE}-kl-${KL}-math-mcts-pureRM-advantage-firsttokentemp
 SAVE_DIR=/workspace/lurui/openrlhf-glm/checkpoints/reinforce/$TAG
 mkdir -p $SAVE_DIR
 
@@ -95,7 +95,6 @@ ray job submit --address="http://127.0.0.1:8265" \
     --max_time_use 360 \
     --random_pick \
     --parent_shift \
-    --use_state_value_reward \
     --use_pure_RM \
     --select_correct_leaf \
     --first_token_temperature 1 \
