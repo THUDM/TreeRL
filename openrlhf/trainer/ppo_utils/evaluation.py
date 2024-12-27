@@ -7,6 +7,9 @@ import time
 from openai import OpenAI
 from vllm import SamplingParams
 import torch
+
+from typing import List, Dict, Any
+
 RETRY_COUNT = 10
 MAX_CONTENT_FILTER_RETRY = 0
 
@@ -738,3 +741,68 @@ def top_k_sampling(llm, prompts,stops = None,skip_special_tokens=True,top_p=0.9)
         return first_tokens_lists
 # input_ids_with_next_token = top_k_sampling(llm, ["What is 1+1?", "What is 2+2?"])
 # print(input_ids_with_next_token)
+
+
+def query_local_vllm_completions_with_logprobs(
+    prompts,
+    llm,
+    skip_special_tokens=False,
+    max_tokens=4096,
+    stops=None,
+    temperature=0.9,
+    top_p=0.9,
+    min_tokens=0
+):
+    from vllm import SamplingParams
+
+    # 这里每个 prompt 只采样一次，如果要实现多次采样，可以多复制几次 prompt 到 prompts
+    sampling_params = SamplingParams(
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+        min_tokens=min_tokens,
+        skip_special_tokens=skip_special_tokens,
+        stop=stops,
+        n=1,
+        logprobs=True
+    )
+
+    content_token_lists: List[List[str]] = []
+    content_str_lists: List[str] = []
+    finish_reason_lists: List[str] = []
+    token_num_lists: List[int] = []
+    log_probs_lists: List[List[float]] = []
+
+    for try_counter in range(RETRY_COUNT):
+        try:
+            outputs = llm.generate(
+                prompts=prompts, sampling_params=sampling_params)
+
+            for output in outputs:
+                log_probs_dict_lists = list(output.outputs[0].logprobs)
+                content_tokens = [[next(iter(log_probs_dict.values(
+                ))).decoded_token for log_probs_dict in log_probs_dict_lists]]
+                log_probs = [[next(iter(log_probs_dict.values(
+                ))).logprob for log_probs_dict in log_probs_dict_lists]]
+
+                content_strs = [outs.text for outs in output.outputs]
+                finish_reasons = [
+                    outs.finish_reason for outs in output.outputs]
+                token_nums = [len(outs.token_ids) for outs in output.outputs]
+
+                content_token_lists.extend(content_tokens)
+                content_str_lists.extend(content_strs)
+                finish_reason_lists.extend(finish_reasons)
+                token_num_lists.extend(token_nums)
+                log_probs_lists.extend(log_probs)
+
+            return content_token_lists, content_str_lists, finish_reason_lists, token_num_lists, log_probs_lists
+
+        except Exception as e:
+            sleep_time = 2 * try_counter + 1
+            if sleep_time > 30:
+                exit(1)
+            print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
+            time.sleep(sleep_time)
+
+    return None, None, None, None, None
