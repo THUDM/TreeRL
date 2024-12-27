@@ -2,25 +2,37 @@ from vllm import LLM
 
 from transformers import AutoTokenizer
 from entropy_chain_local_manager import EntropyGuidedChainLocalManager
-
 from IPython import embed
 
-tokenizer = AutoTokenizer.from_pretrained(
-    '/workspace/reason_data/checkpoint/glm-o1-2w-sft',
-    trust_remote_code=True
-)
 
-
-def tokenize_fn(texts, max_length=4096):
+def tokenize_fn(
+    texts,
+    tokenizer,
+    max_length=4096,
+):
     sample_input_ids = tokenizer.encode(texts, add_special_tokens=False)
     sample_input_ids = sample_input_ids[-max_length:]
     return sample_input_ids
 
 
+def normalize_selected_terminals(paths):
+    leaf_orm_value = [leaf["value"] for leaf in paths]
+    _sum = sum(leaf_orm_value)
+    num = len(leaf_orm_value) - 1
+    mean = [(_sum - leaf_orm_value[i]) /
+            num for i in range(len(leaf_orm_value))]
+    orm_normalized = [leaf_orm_value[i] - mean[i]
+                      for i in range(len(leaf_orm_value))]
+    for i in range(len(orm_normalized)):
+        paths[i]["value"] = orm_normalized[i]
+    return paths
+
+
 def parallel_entropy_guided_tree(
     item,
     llm,
-    args=None
+    args=None,
+    tokenizer=None,
 ):
     manager = EntropyGuidedChainLocalManager(
         args=args,
@@ -36,19 +48,20 @@ def parallel_entropy_guided_tree(
 
     contexts = [node['total_str'].split("<|user|>")[0]
                 for tree in trees for node in tree]
-    finish_reasons = [node['finish_reason'] for tree in trees for node in tree]
 
-    assert len(contexts) == len(pass_k_result) == len(finish_reasons)
+    assert len(contexts) == len(pass_k_result)
 
     paths = []
-    for context, pass_k, finish_reason in zip(contexts, pass_k_result, finish_reasons):
+    for context, pass_k in zip(contexts, pass_k_result):
         paths.append({
-            "token_answer": tokenize_fn(context),
+            "token_answer": tokenize_fn(context, tokenizer),
+            "pass_ratio": pass_k,
             "value": pass_k,
-            "finish_reason": finish_reason
         })
 
-    return paths
+    paths = normalize_selected_terminals(paths)
+    embed()
+    return [paths]
 
 
 if __name__ == '__main__':
@@ -71,4 +84,8 @@ if __name__ == '__main__':
         "evaluator_urls": ["http://172.18.74.40:8000/v1"],
         "eos_tokens": ["<|user|>", "<|endoftext|>", "<|observation|>"],
     }
-    parallel_entropy_guided_tree(item, llm, args)
+    tokenizer = AutoTokenizer.from_pretrained(
+        '/workspace/reason_data/checkpoint/glm-o1-2w-sft',
+        trust_remote_code=True
+    )
+    parallel_entropy_guided_tree(item, llm, args, tokenizer)
