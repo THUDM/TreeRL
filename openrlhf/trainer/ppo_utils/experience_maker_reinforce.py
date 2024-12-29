@@ -190,7 +190,6 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
         print("file_name",str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl")
         if use_mcts:
             if use_vinevalue:
-                print("use vinevalue!!")
                 experiences = self.sample_responses_bymcts_use_vinevalue(
                     prompts,
                     getattr(self.strategy.args, "num_trace_per_sample", 1), 
@@ -199,7 +198,6 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
                     **generate_kwargs
                 )
             else:
-                print("use mcts!!")
                 experiences = self.sample_responses_bymcts(
                     prompts,
                     getattr(self.strategy.args, "num_trace_per_sample", 1), 

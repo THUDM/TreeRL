@@ -1,7 +1,7 @@
 import time
 from typing import List, Dict, Any
-from tree_node import TreeNode
-from evaluation import (
+from openrlhf.trainer.ppo_utils.tree_node import TreeNode
+from openrlhf.trainer.ppo_utils.evaluation import (
     check_result,
     query_local_vllm_completions_with_logprobs,
     GLM_QA_PROMPT
@@ -188,7 +188,7 @@ class EntropyGuidedChainLocalManager:
             for node in tree_list:
                 if node.is_end:
                     response_str = node.total_str
-                    response_str = response_str.split("<|user|>")[0]
+                    # response_str = response_str.split("<|user|>")[0]
                     score = check_result(
                         problem_str,
                         response_str,

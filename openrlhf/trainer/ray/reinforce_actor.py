@@ -354,6 +354,10 @@ class ActorModelRayActor(BasePPORole):
             use_pure_RM = args.use_pure_RM,
             first_token_temperature = args.first_token_temperature,
             use_pure_binary = args.use_pure_binary,
+            use_entropy_tree = args.use_entropy_tree,
+            m = args.m,
+            n = args.n,
+            l = args.l,
         )
 
         trainer.fit(self.prompts_dataloader, self.pretrain_dataloader, args)

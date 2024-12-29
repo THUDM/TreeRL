@@ -17,11 +17,10 @@ def parse_args():
     parser.add_argument('--checkpoint_dirs', type=str, nargs='+',
                         help='Specific checkpoint directory names to evaluate under base_dir')
     parser.add_argument('--result_base_dir', type=str,
-                        # default='/workspace/lurui/glm-simple-evals-1007/glm-simple-evals/RL_auto_results',
-                        default='/workspace/lurui/glm-simple-evals-1007/glm-simple-evals/RL_auto_results',
+                        default='/workspace/lurui/rm_simple_evals/RL_auto_results',
                         help='Base directory for evaluation results')
     parser.add_argument('--eval_script', type=str,
-                        default='/workspace/lurui/glm-simple-evals-1007/glm-simple-evals/test_math_local.sh',
+                        default='/workspace/lurui/rm_simple_evals/auto_eval_multi_time.sh',
                         help='Path to evaluation script')
     parser.add_argument('--base_script', type=str,
                         default='up_model.sh',
@@ -90,8 +89,8 @@ def wait_for_model_ready(api_url, initial_wait=40, check_interval=30, max_retrie
 def check_result_exists(result_dir, model_name):
     """检查是否已有评测结果"""
     # result_path = Path(result_dir) / f"livecodebench_{model_name}" / "results.json"
-    result_path1 = Path(result_dir) / f"{model_name}/simple_evals/omni-math.json"
-    result_path2 = Path(result_dir) / f"{model_name}/simple_evals/math500.json"
+    result_path1 = Path(result_dir) / f"{model_name}/simple_evals/omni-math_average.json"
+    result_path2 = Path(result_dir) / f"{model_name}/simple_evals/math500_average.json"
     # print(f"Checking for existing result: {result_path}")
     # exit(1)
     return result_path1.exists() and result_path2.exists()
@@ -111,8 +110,6 @@ def run_script_non_blocking(cmd):
 
 
 def run_command(cmd, non_blocking=False, show_output=False):
-    # print(cmd)
-    # exit(1)
     # """运行shell命令并返回结果"""
     if non_blocking:
         return run_script_non_blocking(cmd)
@@ -150,10 +147,6 @@ def cleanup_previous_services():
     """清理之前可能运行的服务"""
     try:
         cmd = "pkill -f -9 'import spawn_main'"
-        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL)
-        time.sleep(10)  # 等待进程完全终止
-        cmd = "pkill -f 'vllm.entrypoints.openai.api_server'"
         subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
         time.sleep(10)  # 等待进程完全终止
@@ -217,5 +210,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    

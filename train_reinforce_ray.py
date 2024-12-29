@@ -315,7 +315,10 @@ if __name__ == "__main__":
     parser.add_argument("--use_pure_RM", action="store_true", default=False)
     parser.add_argument("--first_token_temperature", type=float, default=0)
     parser.add_argument("--use_pure_binary", action="store_true", default=False)
-    
+    parser.add_argument("--use_entropy_tree", action="store_true", default=False)
+    parser.add_argument("--m", type=int, default=16)
+    parser.add_argument("--n", type=int, default=2)
+    parser.add_argument("--l", type=int, default=1)
     
     
     args = parser.parse_args()

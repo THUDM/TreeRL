@@ -923,9 +923,12 @@ class MCTSr(BaseModel):
         print("leaf_correctness",leaf_correctness)
         _sum = sum(leaf_correctness)
         num = len(leaf_correctness) - 1
-        mean = [(_sum - leaf_correctness[i]) / num for i in range(len(leaf_correctness))]
-        for i, leaf in enumerate(nodes):
-            leaf.accumulated_value = leaf.accumulated_value - mean[i]
+        if num == 0:
+            return
+        else:
+            mean = [(_sum - leaf_correctness[i]) / num for i in range(len(leaf_correctness))]
+            for i, leaf in enumerate(nodes):
+                leaf.accumulated_value = leaf.accumulated_value - mean[i]
         # self.normalize_backprop()
 
     # def select_terminal(self):
@@ -1305,11 +1308,14 @@ def chain_worker(
         results.append(path["pass_ratio"])
     _sum = sum(results)
     num = len(results) - 1
-    mean = [(_sum - results[i]) / num for i in range(len(results))]
-    for i, path in enumerate(paths):
-        path["value"] = path["pass_ratio"] - mean[i]
-    paths = [[path] for path in paths]
-    return paths
+    if num == 0:
+        return paths
+    else:
+        mean = [(_sum - results[i]) / num for i in range(len(results))]
+        for i, path in enumerate(paths):
+            path["value"] = path["pass_ratio"] - mean[i]
+        paths = [[path] for path in paths]
+        return paths
 
 def mcts_worker(
     item,
@@ -1419,9 +1425,12 @@ def normalize_selected_terminals(selected_terminals: list[MCTSNode]):
     leaf_orm_value = [leaf.accumulated_value for leaf in selected_terminals]
     _sum = sum(leaf_orm_value)
     num = len(leaf_orm_value) - 1
-    mean = [(_sum - leaf_orm_value[i]) / num for i in range(len(leaf_orm_value))]
-    orm_normalized = [leaf_orm_value[i] - mean[i] for i in range(len(leaf_orm_value))]
-    return orm_normalized
+    if num == 0:
+        return leaf_orm_value
+    else:
+        mean = [(_sum - leaf_orm_value[i]) / num for i in range(len(leaf_orm_value))]
+        orm_normalized = [leaf_orm_value[i] - mean[i] for i in range(len(leaf_orm_value))]
+        return orm_normalized
 
 def fill_in_paths(paths):
     # 对于每个路径，如果存在"value"=0，就用他的前一个节点的"value"填充

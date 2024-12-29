@@ -7,9 +7,6 @@ import time
 from openai import OpenAI
 from vllm import SamplingParams
 import torch
-
-from typing import List, Dict, Any
-
 RETRY_COUNT = 10
 MAX_CONTENT_FILTER_RETRY = 0
 
@@ -742,7 +739,6 @@ def top_k_sampling(llm, prompts,stops = None,skip_special_tokens=True,top_p=0.9)
 # input_ids_with_next_token = top_k_sampling(llm, ["What is 1+1?", "What is 2+2?"])
 # print(input_ids_with_next_token)
 
-
 def query_local_vllm_completions_with_logprobs(
     prompts,
     llm,
@@ -775,8 +771,10 @@ def query_local_vllm_completions_with_logprobs(
 
     for try_counter in range(RETRY_COUNT):
         try:
-            outputs = llm.generate(
-                prompts=prompts, sampling_params=sampling_params)
+            # outputs = llm.generate(
+            #     prompts=prompts, sampling_params=sampling_params)
+            outputs = ray.get(llm.generate.remote(
+                prompts=prompts, sampling_params=sampling_params))
 
             for output in outputs:
                 log_probs_dict_lists = list(output.outputs[0].logprobs)

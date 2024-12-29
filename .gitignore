@@ -163,3 +163,7 @@ checkpoints/*
 reward/*
 datasets/*
 logs/*
+
+auto_upload/*
+auto_eval/*
+openrlhf/trainer/ppo_utils/configs
