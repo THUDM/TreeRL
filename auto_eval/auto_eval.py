@@ -168,8 +168,11 @@ def main():
         # if not checkpoint_paths:
         #     print("No checkpoints found.")
         #     break
+        checkpoint_paths = sorted(checkpoint_paths,key=lambda x: int(x.split('step')[-1]))
+        # print(f"Found {len(checkpoint_paths)} checkpoints",checkpoint_paths)
+        # exit(1)
 
-        for checkpoint_path in sorted(checkpoint_paths):
+        for checkpoint_path in (checkpoint_paths):
             model_name = get_model_name(checkpoint_path)
 
             # 检查是否已经评测过

@@ -18,7 +18,7 @@ def upload_results_to_wandb(
         project=project_name,
         name=run_name,  # 主运行名
         group=run_name,  # 分组到主运行名
-        resume="allow",  # 自动覆盖现有运行
+        # resume="allow",  # 自动覆盖现有运行
         id=run_name
     )
     
