@@ -3263,10 +3263,12 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 "m": kwargs.get("m", 16),
                 "n": kwargs.get("n", 2),
                 "l": kwargs.get("l", 1),
-                "evaluator_urls": ["http://172.18.75.109:8000/v1"],
+                "evaluator_urls": ["http://172.18.74.194:8000/v1"],
+                "extractor_urls": ["http://172.18.74.52:8000/v1"],
                 "eos_tokens": ["<|user|>", "<|endoftext|>", "<|observation|>"],
+                "num_traces": num_trace_per_sample,
             }
-            paths = parallel_entropy_guided_tree(item, llm, self.tokenizer,args)   
+            paths = parallel_entropy_guided_tree(item, llm, self.tokenizer, args)   
             input_ids = self.tokenize_fn([[item["problem"]],[None]],1024, device="cpu")["input_ids"][0].tolist()
             print(input_ids)
         else:
@@ -3285,7 +3287,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 steps = []
                 for node in path:
                     steps.append({"value":node["value"],"pass_ratio":node["pass_ratio"]})
-                f.write(json.dumps(steps) + "\n")
+                f.write(json.dumps({"paths":steps,"use entropy tree": use_entropy_tree}) + "\n")
             
         # NOTE: concat all outputs to following format:
         #

@@ -328,14 +328,15 @@ def check_result(
     response,
     label,
     # qwen_urls,
-    urls
+    checker_urls,
+    extractor_urls,
 ):
     if response == "":
         return None, 0
-    answer = extract_answer(question, response, urls)
+    answer = extract_answer(question, response, extractor_urls)
     if answer is None:
         return None, 0
-    check = check_equality(answer, label, urls=urls)
+    check = check_equality(answer, label, urls=checker_urls)
     print("===",check,"===",answer,label)
     with open("/workspace/lurui/openrlhf-glm/logs/outputs/checker_mcts.jsonl", "a") as f:
         f.write(json.dumps({"question":question,"response":response, "extracted_answer": answer, "label": label,"check": check}) + "\n")

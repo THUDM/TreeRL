@@ -10,6 +10,34 @@ def tokenize_fn(texts, tokenizer,max_length=4096):
     sample_input_ids = sample_input_ids[-max_length:]
     return sample_input_ids
 
+import random
+
+def select_paths_with_ratio(paths, num_traces=32):
+    # Shuffle the paths to ensure random selection order
+    random.shuffle(paths)
+
+    selected_paths = []
+    remaining_paths = []
+
+    # Traverse the shuffled paths and select the first pass_ratio == 1 path
+    for path in paths:
+        if path[-1]["pass_ratio"] == 1 and len(selected_paths) == 0:
+            selected_paths.append(path)
+        else:
+            remaining_paths.append(path)
+
+    # Calculate how many additional paths we need
+    remaining_num_traces = num_traces - len(selected_paths)
+
+    # Randomly select remaining_num_traces paths from the remaining_paths if possible
+    if remaining_num_traces > 0:
+        selected_paths.extend(random.sample(remaining_paths, min(remaining_num_traces, len(remaining_paths))))
+
+    # Shuffle the selected paths to ensure they are returned in random order
+    random.shuffle(selected_paths)
+    assert len(selected_paths) == num_traces , f"len(selected_paths) = {len(selected_paths)} != num_traces = {num_traces}"
+
+    return selected_paths
 
 def normalize_selected_terminals(paths):
     leaf_orm_value = [path[-1]["value"] for path in paths]
@@ -37,6 +65,7 @@ def parallel_entropy_guided_tree(
         args=args,
         llm=llm,
         evaluator_urls=args['evaluator_urls'],
+        extractor_urls=args['extractor_urls'],
         eos_tokens_set=args['eos_tokens'],
     )
 
@@ -60,7 +89,7 @@ def parallel_entropy_guided_tree(
             "pass_ratio": pass_k,
             "value": pass_k,
         }])
-
+    paths = select_paths_with_ratio(paths, args['num_traces'])
     paths = normalize_selected_terminals(paths)
     return paths
 
@@ -83,7 +112,9 @@ if __name__ == '__main__':
         "n": 2,
         "l": 1,
         "evaluator_urls": ["http://172.18.75.109:8000/v1"],
+        "extractor_urls": ["http://172.18.75.109:8000/v1"],
         "eos_tokens": ["<|user|>", "<|endoftext|>", "<|observation|>"],
+        "num_traces": 32,
     }
     tokenizer = AutoTokenizer.from_pretrained(
         '/workspace/reason_data/checkpoint/glm-o1-2w-sft',

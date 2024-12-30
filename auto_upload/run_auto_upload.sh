@@ -7,13 +7,13 @@
 # EVAL_DIR=/workspace/lurui/rm_simple_evals/RL_auto_results
 EVAL_DIR=/workspace/lurui/rm_simple_evals/RL_auto_results
 # example 
-# TUNED_MODEL_NAME=ms32-mcts-advantage-value-binary-wototalnorm
+TUNED_MODEL_NAME=ms32-mcts-advantage-value-binary-wototalnorm
 # TUNED_MODEL_NAME=ms32-mcts-binary-chainonly-firsttokentemp
-TUNED_MODEL_NAME=ms72-entropy_guided_tree_binary-8-4-2
+# TUNED_MODEL_NAME=ms72-entropy_guided_tree_binary-8-4-2-fixrepeat
 
 # TUNED_MODEL_NAME=$1
 
 python auto_upload.py \
     --base_path $EVAL_DIR/$TUNED_MODEL_NAME \
-    --project_name openrlhf_code_rl \
-    --run_name $TUNED_MODEL_NAME \
+    --project_name openrlhf_math_mcts \
+    --run_name $TUNED_MODEL_NAME-eval \

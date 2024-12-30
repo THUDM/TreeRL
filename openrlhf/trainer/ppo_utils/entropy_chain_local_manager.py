@@ -16,6 +16,7 @@ class EntropyGuidedChainLocalManager:
         args: Dict[str, Any],
         llm: Any,
         evaluator_urls: List[str],
+        extractor_urls: List[str],
         eos_tokens_set: List[str]
     ):
         """
@@ -29,6 +30,7 @@ class EntropyGuidedChainLocalManager:
         self.args = args
         self.llm = llm
         self.evaluator_urls = evaluator_urls
+        self.extractor_urls = extractor_urls
         self.eos_tokens_set = eos_tokens_set
         self.paths: Dict[str, Any] = {
             "M": args["m"],
@@ -186,14 +188,15 @@ class EntropyGuidedChainLocalManager:
         pass_k_result = []
         for tree_list in self.tree_lists:
             for node in tree_list:
-                if node.is_end:
+                if node.is_end and node.finish_reason == "stop":
                     response_str = node.total_str
                     # response_str = response_str.split("<|user|>")[0]
                     score = check_result(
                         problem_str,
                         response_str,
                         answer_str,
-                        urls=self.evaluator_urls
+                        checker_urls=self.evaluator_urls,
+                        extractor_urls=self.extractor_urls
                     )[-1]
                     pass_k_result.append(score)
                 else:

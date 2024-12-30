@@ -85,6 +85,15 @@ RM_URLS = []
 ips = rm_api_config['ip']
 for key, value in ips.items():
     RM_URLS.extend([key for _ in range(value)])
+    
+    
+with open("/workspace/lurui/openrlhf-glm/openrlhf/trainer/ppo_utils/configs/api_extractor.json") as f:
+    api_extractor_config = json.load(f)
+
+EXTRACTOR_URLS = []
+ips = api_extractor_config['ip']
+for key, value in ips.items():
+    EXTRACTOR_URLS.extend([key for _ in range(value)])
 
 eos_tokens_set = [151329,151336,151338]
 
@@ -353,7 +362,8 @@ class MCTSr(BaseModel):
                 extracted_answer, result = check_result(
                     self.problem, node.answer, self.golden_answer,
                     # qwen_urls=qwen_urls,
-                    urls=EVALUATOR_URLS)
+                    extractor_urls=EXTRACTOR_URLS,
+                    checker_urls=EVALUATOR_URLS)
                 reward = result
             if self.use_pure_binary:
                 print("use pure binary")
@@ -1304,7 +1314,7 @@ def chain_worker(
     results = []
     for path in paths:
         path["reward"] = get_qwen_remote_reward_model_value(urls= RM_URLS, question = item[prompt_key], response = path["answer"])
-        path["pass_ratio"] = check_result(item[args["prompt_key"]], path["answer"], item[answer_key],urls=EVALUATOR_URLS)[-1]
+        path["pass_ratio"] = check_result(item[args["prompt_key"]], path["answer"], item[answer_key],checker_urls=EVALUATOR_URLS,extractor_urls=EXTRACTOR_URLS)[-1]
         results.append(path["pass_ratio"])
     _sum = sum(results)
     num = len(results) - 1
