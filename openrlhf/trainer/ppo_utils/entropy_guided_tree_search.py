@@ -190,6 +190,9 @@ if __name__ == '__main__':
             tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
         return sample_input_ids
     
+    def decode_fn(ids):
+        return self.tokenizer.decode(ids,skip_special_tokens=False)
+    
     item = {
         "problem": "The graph of $$x^4=x^2 y^2$$ is a union of $$n$$ different lines. What is the value of $$n$$ ?",
         "golden_answer": "3"
@@ -218,7 +221,7 @@ if __name__ == '__main__':
         '/workspace/reason_data/checkpoint/glm-o1-2w-sft',
         trust_remote_code=True
     )
-    parallel_entropy_guided_tree(item, llm, args, tokenizer, tokenize_fn)
+    parallel_entropy_guided_tree(item, llm,tokenizer, args, tokenize_fn, decode_fn)
 
     # 以下是用于本地评测 omnimath-500 passrate 的代码
     # eval_path = "/workspace/lurui/agentic-reason/TreeSearch/entropy_tree/data/omnimath-500-with-difficulty.jsonl"
