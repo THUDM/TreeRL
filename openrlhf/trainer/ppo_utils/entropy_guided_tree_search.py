@@ -16,8 +16,12 @@ from filelock import FileLock
 from IPython import embed
 from tqdm import tqdm  # Import tqdm for progress display
 
+# tokenizer = AutoTokenizer.from_pretrained(
+#     "/workspace/reason_data/checkpoint/glm-o1-2w-sft",
+#     trust_remote_code=True
+# )
 tokenizer = AutoTokenizer.from_pretrained(
-    "/workspace/reason_data/checkpoint/glm-o1-2w-sft",
+    "/data/o1-cloud/checkpoints/sft/glm_9b_1102",
     trust_remote_code=True
 )
 
@@ -26,7 +30,6 @@ def decode_fn(ids):
     global tokenizer
     return tokenizer.decode(ids, skip_special_tokens=False)
 
-
 def encode_fn(text, max_length=4096, add_special_tokens=False):
     global tokenizer
     sample_input_ids = tokenizer.encode(
@@ -34,15 +37,6 @@ def encode_fn(text, max_length=4096, add_special_tokens=False):
     )
     sample_input_ids = sample_input_ids[-max_length:]
     return sample_input_ids
-
-
-def tokenize_fn(texts, max_length=2048, device="cpu"):
-    sample_input_ids = tokenizer.encode(
-        "[gMASK]<sop><|user|>\n" + texts[0][0], add_special_tokens=False)
-    sample_input_ids = sample_input_ids[-max_length:] + \
-        tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
-    return sample_input_ids
-
 
 def select_paths_with_ratio(paths, num_traces=32):
     # Shuffle the paths to ensure random selection order
@@ -94,7 +88,8 @@ def parallel_entropy_guided_tree(
     item,
     llm,
     tokenizer,
-    args=None
+    args=None,
+    tokenize_fn=None,
 ):
     manager = EntropyGuidedChainLocalManager(
         args=args,
@@ -120,12 +115,7 @@ def parallel_entropy_guided_tree(
     embed()
 
     paths = []
-    # for context, pass_k in zip(contexts, pass_k_result):
-    #     paths.append([{
-    #         "token_answer": tokenize_fn(context, tokenizer),
-    #         "pass_ratio": pass_k,
-    #         "value": pass_k,
-    #     }])
+    
     for context, pass_k in zip(contexts, pass_k_result):
         if args['entropy_use_rm']:
             print("use orm as reward")
@@ -136,14 +126,14 @@ def parallel_entropy_guided_tree(
             x = a*(value-b)
             result = 1/(1+math.exp(-x))
             paths.append([{
-                "token_answer": tokenize_fn(context, tokenizer),
+                "token_answer": tokenize_fn(context),
                 "pass_ratio": pass_k,
                 "value": result,
             }])
         else:
             print("use binary as reward")
             paths.append([{
-                "token_answer": tokenize_fn(context, tokenizer),
+                "token_answer": tokenize_fn(context),
                 "pass_ratio": pass_k,
                 "value": pass_k,
             }])
@@ -152,7 +142,7 @@ def parallel_entropy_guided_tree(
     return paths
 
 
-def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluator_urls, extractor_urls, eos_tokens, output_file):
+def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluator_urls, extractor_urls, eos_tokens, output_file,tokenize_fn):
     '''
     仅用作评测本地 vllm 推理性能，不进入 RL 训练
     '''
@@ -204,6 +194,14 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
 
 if __name__ == '__main__':
     # RL 调用参数
+    
+    def tokenize_fn(texts, max_length=2048, device="cpu"):
+        sample_input_ids = tokenizer.encode(
+            "[gMASK]<sop><|user|>\n" + texts[0][0], add_special_tokens=False)
+        sample_input_ids = sample_input_ids[-max_length:] + \
+            tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
+        return sample_input_ids
+    
     item = {
         "problem": "The graph of $$x^4=x^2 y^2$$ is a union of $$n$$ different lines. What is the value of $$n$$ ?",
         "golden_answer": "3"
@@ -232,7 +230,7 @@ if __name__ == '__main__':
         '/workspace/reason_data/checkpoint/glm-o1-2w-sft',
         trust_remote_code=True
     )
-    parallel_entropy_guided_tree(item, llm, args, tokenizer)
+    parallel_entropy_guided_tree(item, llm, args, tokenizer, tokenize_fn)
 
     # 以下是用于本地评测 omnimath-500 passrate 的代码
     # eval_path = "/workspace/lurui/agentic-reason/TreeSearch/entropy_tree/data/omnimath-500-with-difficulty.jsonl"
@@ -256,7 +254,7 @@ if __name__ == '__main__':
     # processes = []
     # for gpu_id, data_batch in enumerate(data_batches):
     #     p = Process(target=process_single_data_for_each_gpu, args=(
-    #         data_batch, gpu_id, tokenizer_path, evaluator_urls, extractor_urls, eos_tokens, output_file))
+    #         data_batch, gpu_id, tokenizer_path, evaluator_urls, extractor_urls, eos_tokens, output_file,tokenize_fn))
     #     processes.append(p)
     #     p.start()
 
