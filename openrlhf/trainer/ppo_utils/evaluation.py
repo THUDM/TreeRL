@@ -802,3 +802,71 @@ def query_local_vllm_completions_with_logprobs(
             print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
             time.sleep(sleep_time)
     return None, None, None, None, None
+
+def query_local_vllm_ids_with_logprobs(
+    prompt_token_ids,
+    llm,
+    n=1,
+    skip_special_tokens=True,
+    max_tokens=4096,
+    stops=None,
+    temperature=0.9,
+    top_p=0.9,
+    min_tokens=0
+):
+    sampling_params = SamplingParams(
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+        min_tokens=min_tokens,
+        skip_special_tokens=skip_special_tokens,
+        stop_token_ids=stops,
+        n=n,
+        logprobs=True
+    )
+
+    content_token_id_lists: List[List[int]] = []
+    content_str_lists: List[str] = []
+    finish_reason_lists: List[str] = []
+    token_num_lists: List[int] = []
+    log_probs_lists: List[List[float]] = []
+
+    for try_counter in range(RETRY_COUNT):
+        try:
+            outputs = llm.generate(
+                prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
+            )
+
+            for output in outputs:
+                assert len(output.outputs) == 1
+                out = output.outputs[0]
+                log_probs_dict_lists = list(out.logprobs)
+
+                content_token_ids = [next(iter(log_probs_dict.keys(
+                ))) for log_probs_dict in log_probs_dict_lists]
+
+                log_probs = [next(iter(log_probs_dict.values(
+                ))).logprob for log_probs_dict in log_probs_dict_lists]
+                content_strs = out.text
+
+                finish_reasons = out.finish_reason
+                token_nums = len(out.token_ids)
+
+                content_token_id_lists.append(content_token_ids)
+                content_str_lists.append(content_strs)
+                finish_reason_lists.append(finish_reasons)
+                token_num_lists.append(token_nums)
+                log_probs_lists.append(log_probs)
+
+            return content_token_id_lists, content_str_lists, finish_reason_lists, token_num_lists, log_probs_lists
+
+        except Exception as e:
+            sleep_time = 2 * try_counter + 1
+            if sleep_time > 30:
+                exit(1)
+            import traceback
+            traceback.print_exc()
+            print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
+            time.sleep(sleep_time)
+
+    return None, None, None, None, None

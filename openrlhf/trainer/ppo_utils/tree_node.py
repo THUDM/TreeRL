@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Callable
 
 
 class TreeNode:
@@ -6,7 +6,8 @@ class TreeNode:
         self,
         tree_idx: int,
         node_idx: int,
-        token_list: List[str],
+        decode_fn: Callable,
+        token_id_list: List[str],
         log_prob_list: List[float],
         finish_reason: Optional[str] = None,
         is_end: bool = False,
@@ -24,9 +25,12 @@ class TreeNode:
         self.node_idx: int = node_idx  # 节点的索引
 
         # --- 节点包含的文本信息 ---
-        self.token_list: List[str] = token_list
+        self.token_id_list: List[int] = token_id_list
+        self.token_str_list: List[str] = [
+            decode_fn([token_id]) for token_id in token_id_list]
+
         self.log_prob_list: List[float] = log_prob_list
-        self.token_num: int = len(token_list)  # token 数量
+        self.token_num: int = len(token_id_list)  # token 数量
         self.finish_reason: Optional[str] = finish_reason  # 结束原因
         self.is_end: bool = is_end  # 是否是叶子节点
 
@@ -42,23 +46,35 @@ class TreeNode:
         self.child_split_indices: List[int] = child_split_indices if child_split_indices else [
         ]
 
+        # --- 孩子正确率信息（分段） ---
+        self.child_correct_num: List[int] = []
+        self.child_total_num: List[int] = []
+
         # --- 截止到目前的 aggregate 字符串以及所有完整字符串（减少遍历时间，以及用于判断答案） ---
         self.aggregate_str: str = ""
         if parent_node is not None:
-            parent_token_list = parent_node.token_list
+            parent_token_str_list = parent_node.token_str_list
             self.aggregate_str = parent_node.aggregate_str + \
-                ''.join(parent_token_list[:parent_node_split_idx])
-        self.total_str: str = self.aggregate_str + ''.join(token_list)
+                ''.join(parent_token_str_list[:parent_node_split_idx])
+        self.total_str: str = self.aggregate_str + ''.join(self.token_str_list)
+
+        self.aggregate_token_ids: List[int] = []
+        if parent_node is not None:
+            self.aggregate_token_ids = parent_node.aggregate_token_ids + \
+                parent_node.token_id_list[:parent_node_split_idx]
 
         # --- 掩码信息 ---
-        self.mask: List[bool] = [False] * len(token_list)
-        for i, token_str in enumerate(token_list):
-            if "conclusion" in token_str or "answer" in token_str:
+        self.mask: List[bool] = [False] * len(self.token_str_list)
+        for i, token_str in enumerate(self.token_str_list):
+            if "conclusion" in token_str.lower() or "answer" in token_str.lower():
                 # 掩盖后续 tokens
                 for j in range(i + 1, len(self.mask)):
                     self.mask[j] = True
                 self.is_end = True
                 break
+
+        # --- 节点的分数 ---
+        self.score: Optional[float] = None
 
     def get_prefix(self, current_token_index: int) -> str:
         """
@@ -97,7 +113,17 @@ class TreeNode:
         # print("you pass!")
 
         parent_tokens = self.aggregate_str
-        return parent_tokens + ''.join(self.token_list[:current_token_index])
+        return parent_tokens + ''.join(self.token_str_list[:current_token_index])
+
+    def get_prefix_ids(self, current_token_index: int) -> List[int]:
+        """
+        给定截断的位置，获取前缀 token_ids
+
+        :return: 拼接后的前缀 token_ids 列表。
+        """
+
+        parent_token_ids = self.aggregate_token_ids
+        return parent_token_ids + self.token_id_list[:current_token_index]
 
     def add_child(self, child_node: 'TreeNode', split_index: int) -> None:
         """
@@ -131,7 +157,8 @@ class TreeNode:
         result = [idx for _, idx in sorted_indices[:top_n]]
 
         # 如果不够 top_n 个，复制若干份，确保鲁棒性
-        while len(result) < top_n:
-            result += result[:top_n - len(result)]
+        # 但这样可能会导致重复，所以目前不使用
+        # while len(result) < top_n:
+        #     result += result[:top_n - len(result)]
 
         return result

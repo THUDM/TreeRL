@@ -1,11 +1,21 @@
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable
 from openrlhf.trainer.ppo_utils.tree_node import TreeNode
+
 from openrlhf.trainer.ppo_utils.evaluation import (
     check_result,
     query_local_vllm_completions_with_logprobs,
+    query_local_vllm_ids_with_logprobs,
     GLM_QA_PROMPT
 )
+
+# from tree_node import TreeNode
+# from evaluation import (
+#     check_result,
+#     query_local_vllm_completions_with_logprobs,
+#     query_local_vllm_ids_with_logprobs,
+#     GLM_QA_PROMPT
+# )
 
 from IPython import embed
 
@@ -15,9 +25,11 @@ class EntropyGuidedChainLocalManager:
         self,
         args: Dict[str, Any],
         llm: Any,
+        encode_fn: Callable,
+        decode_fn: Callable,
         evaluator_urls: List[str],
         extractor_urls: List[str],
-        eos_tokens_set: List[str]
+        eos_tokens_set: List[int]
     ):
         """
         初始化管理器。
@@ -32,6 +44,8 @@ class EntropyGuidedChainLocalManager:
         self.evaluator_urls = evaluator_urls
         self.extractor_urls = extractor_urls
         self.eos_tokens_set = eos_tokens_set
+        self.encode_fn = encode_fn
+        self.decode_fn = decode_fn
         self.paths: Dict[str, Any] = {
             "M": args["m"],
             "N": args["n"],
@@ -75,16 +89,24 @@ class EntropyGuidedChainLocalManager:
         N = self.args["n"]
         L = self.args["l"]
 
+        init_prompt_ids_with_template = self.encode_fn(
+            [[init_prompt_with_template]],
+        )
+
         paths = self.paths
+
+        self.paths['init_prompt_ids_with_template'] = init_prompt_ids_with_template
+
         time_start = time.time()
 
         # 初始化 M 棵树
         self.tree_lists = []
-        initial_prompts = [init_prompt_with_template] * M
+        initial_prompt_ids = [init_prompt_ids_with_template] * M
 
         # 获取初始推理结果
-        initial_results = query_local_vllm_completions_with_logprobs(
-            initial_prompts,
+        # initial_results = query_local_vllm_completions_with_logprobs(
+        initial_results = query_local_vllm_ids_with_logprobs(
+            initial_prompt_ids,
             llm=self.llm,
             skip_special_tokens=False,
             max_tokens=4096,
@@ -93,11 +115,12 @@ class EntropyGuidedChainLocalManager:
             top_p=self.args["top_p"],
         )
 
-        for idx, (response_tokens, _, finish_reason, _, log_probs) in enumerate(zip(*initial_results)):
+        for idx, (content_token_ids, _, finish_reason, _, log_probs) in enumerate(zip(*initial_results)):
             root_node = TreeNode(
                 tree_idx=idx,
                 node_idx=0,
-                token_list=response_tokens,
+                decode_fn=self.decode_fn,
+                token_id_list=content_token_ids,
                 log_prob_list=log_probs,
                 is_end=True,
                 finish_reason=finish_reason
@@ -138,19 +161,21 @@ class EntropyGuidedChainLocalManager:
                 break
 
             # 准备推理
-            m_tree_top_n_prompts = []
+            m_tree_top_n_prompt_ids = []
             task_mapping = {}
             for i, (tree_idx, node_idx, node, split_idx) in enumerate(expansion_tasks):
-                prefix = node.get_prefix(split_idx)
-                prompt = GLM_QA_PROMPT.format(
-                    prompt=problem_str, response=prefix
-                )
-                m_tree_top_n_prompts.append(prompt)
+                # prefix = node.get_prefix(split_idx)
+                # prompt = GLM_QA_PROMPT.format(
+                #     prompt=problem_str, response=prefix
+                # )
+                prefix_ids = node.get_prefix_ids(split_idx)
+                prompt_ids = init_prompt_ids_with_template + prefix_ids
+                m_tree_top_n_prompt_ids.append(prompt_ids)
                 task_mapping[i] = (tree_idx, node_idx, node, split_idx)
 
             # 批量执行推理
-            inference_results = query_local_vllm_completions_with_logprobs(
-                m_tree_top_n_prompts,
+            inference_results = query_local_vllm_ids_with_logprobs(
+                m_tree_top_n_prompt_ids,
                 llm=self.llm,
                 skip_special_tokens=False,
                 max_tokens=4096,
@@ -160,14 +185,15 @@ class EntropyGuidedChainLocalManager:
             )
 
             # 处理结果，更新树结构
-            for i, (response_tokens, _, finish_reason, _, log_probs) in enumerate(zip(*inference_results)):
+            for i, (content_token_ids, _, finish_reason, _, log_probs) in enumerate(zip(*inference_results)):
                 tree_idx, node_idx, parent_node, split_idx = task_mapping[i]
 
                 # 在 split_idx 处分裂当前节点
                 new_node = TreeNode(
                     tree_idx=tree_idx,
                     node_idx=len(self.tree_lists[tree_idx]),
-                    token_list=response_tokens,
+                    token_id_list=content_token_ids,
+                    decode_fn=self.decode_fn,
                     log_prob_list=log_probs,
                     is_end=True,
                     parent_node=parent_node,
@@ -218,7 +244,8 @@ class EntropyGuidedChainLocalManager:
         序列化单个树列表。
         """
         return [{
-            'tokens': node.token_list,
+            'token_ids': node.token_id_list,
+            'token_strs': node.token_str_list,
             'log_probs': node.log_prob_list,
             'is_end': node.is_end,
             'mask': node.mask,
