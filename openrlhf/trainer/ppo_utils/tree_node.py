@@ -1,4 +1,24 @@
+from __future__ import annotations
 from typing import List, Optional, Callable
+from pydantic import BaseModel
+import json
+import random
+
+
+class MCTSNode(BaseModel):
+    answer: str
+    answer_token : List[int]
+    parent: MCTSNode | None = None
+    children: list[MCTSNode] = []
+    R : float = 0
+    depth: int = 0
+    main_chain: bool = False
+    terminal: bool = False
+    terminal_in_subtree: int = 0
+    correct_terminal_in_subtree: int = 0
+    accumulated_value: float = 0
+    repeat:bool = False
+    value: float = 0
 
 class TreeNode:
     def __init__(
@@ -61,7 +81,6 @@ class TreeNode:
         if parent_node is not None:
             self.aggregate_token_ids = parent_node.aggregate_token_ids + \
                 parent_node.token_id_list[:parent_node_split_idx]
-        self.total_token_ids: List[int] = self.aggregate_token_ids + self.token_id_list
 
         # --- 掩码信息 ---
         self.mask: List[bool] = [False] * len(self.token_str_list)
@@ -74,6 +93,7 @@ class TreeNode:
                 break
 
         # --- 节点的分数 ---
+        self.binary_score: Optional[float] = None
         self.score: Optional[float] = None
 
     def get_prefix(self, current_token_index: int) -> str:
@@ -162,5 +182,202 @@ class TreeNode:
         #     result += result[:top_n - len(result)]
 
         return result
+
+def build_into_tree_format(tree_lists,decode_fn,num_traces) -> MCTSNode:
+    # from IPython import embed
+    # embed()
+    all_leaves = []
+    try:
+        def convert_to_json(node: MCTSNode):
+            if not node.children:
+                return {
+                    "answer": node.answer,
+                    "R" : node.R,
+                    "depth": node.depth,
+                    "main_chain": node.main_chain,
+                    "terminal": node.terminal,
+                    "terminal_in_subtree": node.terminal_in_subtree,
+                    "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
+                    "accumulated_value": node.accumulated_value
+                }
+            else:
+                return {
+                    "answer": node.answer,
+                    "R" : node.R,
+                    "depth": node.depth,
+                    "main_chain": node.main_chain,
+                    "terminal": node.terminal,
+                    "children": [convert_to_json(child) for child in node.children],
+                    "terminal_in_subtree": node.terminal_in_subtree,
+                    "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
+                    "accumulated_value": node.accumulated_value,
+                }
+        def build_tree_node(decode_fn,tree_node: TreeNode, parent_mcts_node: Optional[MCTSNode] = None) -> MCTSNode:
+            # 对 child_nodes 按照 parent_node_split_idx 进行排序
+            tree_node.child_nodes.sort(key=lambda x: x.parent_node_split_idx)
+
+            # 存储所有孩子节点的 parent_node_split_idx
+            child_split_indices = [child.parent_node_split_idx for child in tree_node.child_nodes]
+            
+            # 如果没有孩子节点，设置end_idx为整个token_id_list的长度
+            is_terminal = False
+            R = 0
+            main_chain = False
+            if not child_split_indices:
+                first_child_split_idx = len(tree_node.token_id_list)
+                is_terminal = True
+                R = tree_node.score
+                if R == 1:
+                    main_chain = True
+            else:
+                first_child_split_idx = child_split_indices[0]
+
+            # 初始节点段，从0到第一个孩子的分割位置
+            root_node = MCTSNode(
+                answer=''.join([decode_fn([token_id]) for token_id in tree_node.token_id_list[:first_child_split_idx]]),
+                answer_token=tree_node.token_id_list[:first_child_split_idx],
+                parent=parent_mcts_node,
+                depth=(parent_mcts_node.depth + 1) if parent_mcts_node else 0,
+                terminal=is_terminal,
+                R = R,
+                main_chain = main_chain
+            )
+            
+            if root_node.terminal:
+                all_leaves.append(root_node)
+
+            # 递归构建子树
+            def add_segments_and_children(current_mcts_node: MCTSNode, start_idx: int):
+                i = 0
+                while i < len(tree_node.child_nodes):
+                    child_nodes_group = []
+                    current_split_idx = child_split_indices[i]
+                    
+                    # 收集所有具有相同 parent_node_split_idx 的孩子节点
+                    while i < len(tree_node.child_nodes) and child_split_indices[i] == current_split_idx:
+                        child_nodes_group.append(tree_node.child_nodes[i])
+                        i += 1
+                    is_terminal = False
+                    R = 0
+                    main_chain = False
+                    if i < len(tree_node.child_nodes):
+                        next_split_idx = child_split_indices[i]
+                    else:
+                        next_split_idx = len(tree_node.token_id_list)
+                        is_terminal = True
+                        R = tree_node.score
+                        if R == 1:
+                            main_chain = True
+                    
+                    # 创建当前段后的子段
+                    segment_node = MCTSNode(
+                        answer=''.join([decode_fn([token_id]) for token_id in tree_node.token_id_list[start_idx:next_split_idx]]),
+                        answer_token=tree_node.token_id_list[start_idx:next_split_idx],
+                        parent=current_mcts_node,
+                        depth=current_mcts_node.depth + 1,
+                        terminal=is_terminal,
+                        R = R,
+                        main_chain = main_chain
+                    )
+                    current_mcts_node.children.append(segment_node)
+                    if segment_node.terminal:
+                        all_leaves.append(segment_node)
+                    
+                    # 为每一个子节点组添加子树, 并将子树挂载到segment_node
+                    for child_node in child_nodes_group:
+                        child_mcts_node = build_tree_node(decode_fn,child_node, current_mcts_node)
+                        current_mcts_node.children.append(child_mcts_node)
+                    
+                    start_idx = next_split_idx
+                    # 更新当前父节点
+                    current_mcts_node = segment_node
+
+            # 初始调用，为根节点添加子段
+            add_segments_and_children(root_node, first_child_split_idx)
+            
+            return root_node
+
+        # 构建根节点
+        root = MCTSNode(
+            answer="",
+            answer_token=[]
+        )
         
+        # 根的所有孩子是所有tree_lists[i][0]
+        for i, tree_list in enumerate(tree_lists):
+            if len(tree_list) > 0:
+                root.children.append(build_tree_node(decode_fn,tree_list[0], root))
         
+        leaf_normalize(all_leaves)
+        selected_terminals = select_terminal(all_leaves,num_traces)
+        with open("/workspace/lurui/openrlhf-mcts/data/tree.jsonl","w") as f:
+            f.write(json.dumps(convert_to_json(root)))
+            f.write("\n")
+        
+        return root,selected_terminals
+    except Exception as e:
+        print(e)
+        from IPython import embed
+        embed()
+        
+def leaf_normalize(nodes):
+    leaf_correctness = [leaf.R for leaf in nodes]
+    print("leaf_correctness",leaf_correctness)
+    _sum = sum(leaf_correctness)
+    num = len(leaf_correctness) - 1
+    if num == 0:
+        return
+    else:
+        mean = [(_sum - leaf_correctness[i]) / num for i in range(len(leaf_correctness))]
+        for i, leaf in enumerate(nodes):
+            leaf.R = leaf.R - mean[i]
+            leaf.accumulated_value = leaf.R
+            leaf_backpropagate(leaf)
+            
+def leaf_backpropagate(node: MCTSNode):
+    if node.terminal and node.main_chain:
+        node.terminal_in_subtree += 1
+        node.correct_terminal_in_subtree += 1
+        # 所有父亲的terminal_in_subtree和correct_terminal_in_subtree都加1
+        parent = node.parent
+        while parent:
+            parent.terminal_in_subtree += 1
+            parent.correct_terminal_in_subtree += 1
+            parent.accumulated_value += node.accumulated_value
+            parent = parent.parent
+    elif node.terminal:
+        node.terminal_in_subtree += 1
+        # 所有父亲的terminal_in_subtree都加1
+        parent = node.parent
+        while parent:
+            parent.terminal_in_subtree += 1
+            parent.accumulated_value += node.accumulated_value
+            parent = parent.parent
+        
+def select_terminal(nodes,num_traces):
+    random.shuffle(nodes)
+
+    selected_terminals = []
+    remaining_terminals = []
+
+    # Traverse the shuffled paths and select the first pass_ratio == 1 path
+    for node in nodes:
+        if node.main_chain and len(selected_terminals) == 0:
+            selected_terminals.append(node)
+        else:
+            remaining_terminals.append(node)
+
+    # Calculate how many additional paths we need
+    remaining_num_traces = num_traces - len(selected_terminals)
+
+    # Randomly select remaining_num_traces paths from the remaining_paths if possible
+    if remaining_num_traces > 0:
+        selected_terminals.extend(random.sample(remaining_terminals, min(
+            remaining_num_traces, len(remaining_terminals))))
+
+    # Shuffle the selected paths to ensure they are returned in random order
+    random.shuffle(selected_terminals)
+    assert len(
+        selected_terminals) == num_traces, f"len(selected_paths) = {len(selected_terminals)} != num_traces = {num_traces}"
+
+    return selected_terminals

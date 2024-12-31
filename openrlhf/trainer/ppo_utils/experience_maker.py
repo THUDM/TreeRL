@@ -2491,7 +2491,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 r = r * pass_rate_mask
         else:
             pass_rate = torch.zeros(action_log_probs.shape[0], device=device)
-
+        print("_raw_reward",_raw_reward.shape,_raw_reward[0])
         return {
             "action_mask": action_mask,
             "attention_mask": attention_mask,
@@ -3267,10 +3267,15 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 "l": kwargs.get("l", 1),
                 "evaluator_urls": ["http://172.18.74.194:8000/v1"],
                 "extractor_urls": ["http://172.18.74.52:8000/v1"],
+                "entropy_rm_urls": ["http://172.18.73.102:8000/v1"],
                 "eos_tokens": ["<|user|>", "<|endoftext|>", "<|observation|>"],
                 "num_traces": num_trace_per_sample,
-                "entropy_use_rm" : kwargs.get("entropy_use_rm", False),
-                "entropy_rm_urls" : ["http://172.18.73.102:8000/v1"],
+                "use_pure_binary" :kwargs.get("use_pure_binary", False),
+                "use_pure_RM" : kwargs.get("use_pure_RM", False),
+                "use_orm_reward" : kwargs.get("use_orm_reward", False),
+                "use_chain_reward" : kwargs.get("use_chain_reward", False),
+                "step_level_norm" : kwargs.get("step_level_norm", False),
+                "use_state_value_reward" : kwargs.get("use_state_value_reward", False),
             }
             paths = parallel_entropy_guided_tree(item, llm, args, self.tokenize_fn, decode_fn)   
             input_ids = self.tokenize_fn([[item["problem"]],[None]],1024, device="cpu")["input_ids"][0].tolist()
@@ -3287,11 +3292,11 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         assert paths is not None, f"paths is None, prompts: {prompts}"
         # print("paths:",paths)
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/treepath_entropy.jsonl", "a") as f:
+            steps = []
             for path in paths:
-                steps = []
                 for node in path:
                     steps.append({"value":node["value"],"pass_ratio":node["pass_ratio"]})
-                f.write(json.dumps({"paths":steps,"use entropy tree": use_entropy_tree}) + "\n")
+            f.write(json.dumps({"paths":steps,"use entropy tree": use_entropy_tree}) + "\n")
             
         # NOTE: concat all outputs to following format:
         #

@@ -362,6 +362,8 @@ class ReinforceTrainer(ABC):
         if self.pretrain_dataloader is not None:
             status["ptx_loss"] = ptx_loss.item()
         for k, v in experience.info.items():
+            # if k == "reward":  
+            #     print("here is reward",k, v,v.shape(), v.mean().item())
             if k == "kl":
                 status[k] = (
                     (v * experience.info["response_length"]).sum() / experience.info["response_length"].sum()

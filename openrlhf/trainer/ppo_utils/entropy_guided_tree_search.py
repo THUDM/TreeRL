@@ -2,7 +2,6 @@ import random
 from vllm import LLM
 from transformers import AutoTokenizer
 from openrlhf.trainer.ppo_utils.entropy_chain_local_manager import EntropyGuidedChainLocalManager
-from openrlhf.trainer.ppo_utils.evaluation import get_qwen_remote_reward_model_value
 
 # from entropy_chain_local_manager import EntropyGuidedChainLocalManager
 # from evaluation import get_qwen_remote_reward_model_value
@@ -86,47 +85,8 @@ def parallel_entropy_guided_tree(
         eos_tokens_set=args['eos_tokens'],
     )
 
-    result = manager.process_single_item(item)
-
-    trees = result['path']['tree_structures']
-    pass_k_result = result['path']['pass_k_result']
-
-    # contexts = [node['total_str'].split("<|user|>")[0]
-    #             for tree in trees for node in tree]
-    contexts = [node['total_str']
-                for tree in trees for node in tree]
-    context_ids = [node['total_token_ids']
-                for tree in trees for node in tree]
-
-    assert len(context_ids) == len(pass_k_result)
-    # embed()
-
-    paths = []
-    
-    for context, context_id, pass_k in zip(contexts, context_ids, pass_k_result):
-        if args['entropy_use_rm']:
-            print("use orm as reward")
-            value = get_qwen_remote_reward_model_value(
-                args['entropy_rm_urls'], item['problem'], context
-            )
-            a = 0.5
-            b = -2.898
-            x = a*(value-b)
-            result = 1/(1+math.exp(-x))
-            paths.append([{
-                "token_answer": context_id,
-                "pass_ratio": pass_k,
-                "value": result,
-            }])
-        else:
-            print("use binary as reward")
-            paths.append([{
-                "token_answer": context_id,
-                "pass_ratio": pass_k,
-                "value": pass_k,
-            }])
-    paths = select_paths_with_ratio(paths, args['num_traces'])
-    paths = normalize_selected_terminals(paths)
+    result = manager.process_single_item(item,args)
+    paths = result["paths"]
     return paths
 
 
@@ -194,14 +154,14 @@ if __name__ == '__main__':
         return sample_input_ids
     
     def decode_fn(ids):
-        return self.tokenizer.decode(ids,skip_special_tokens=False)
+        return tokenizer.decode(ids,skip_special_tokens=False)
     
     item = {
         "problem": "The graph of $$x^4=x^2 y^2$$ is a union of $$n$$ different lines. What is the value of $$n$$ ?",
         "golden_answer": "3"
     }
     llm = LLM(
-        model="/workspace/reason_data/checkpoint/glm-o1-2w-sft",
+        model="/data/o1-cloud/checkpoints/sft/glm_9b_1102",
         tensor_parallel_size=1,
         trust_remote_code=True,
         seed=3407
@@ -217,10 +177,18 @@ if __name__ == '__main__':
         # "eos_tokens": ["<|user|>", "<|endoftext|>", "<|observation|>"],
         "eos_tokens": [151329, 151336, 151338],
         "num_traces": 32,
-        "entropy_use_rm": False,
-        "entropy_rm_urls": ["http://172.18.73.102:8000/v1"]
+        "entropy_rm_urls": ["http://172.18.73.102:8000/v1"],
+        "use_pure_binary" :True,
+        "use_pure_RM" : False,
+        "use_orm_reward" : False,
+        "use_chain_reward" : False,
+        "step_level_norm" : True,
+        "use_state_value_reward" :False,
+        
     }
-    parallel_entropy_guided_tree(item, llm,tokenizer, args, tokenize_fn, decode_fn)
+    paths = parallel_entropy_guided_tree(item, llm, args, tokenize_fn, decode_fn)
+    with open("/workspace/lurui/openrlhf-mcts/data/entropy_paths.jsonl","w",encoding="utf-8") as f:
+        json.dump({"path":paths},f,ensure_ascii=False)
 
     # 以下是用于本地评测 omnimath-500 passrate 的代码
     # eval_path = "/workspace/lurui/agentic-reason/TreeSearch/entropy_tree/data/omnimath-500-with-difficulty.jsonl"

@@ -319,7 +319,6 @@ if __name__ == "__main__":
     parser.add_argument("--m", type=int, default=16)
     parser.add_argument("--n", type=int, default=2)
     parser.add_argument("--l", type=int, default=1)
-    parser.add_argument("--entropy_use_rm", action="store_true", default=False)
 
     
     

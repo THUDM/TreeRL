@@ -1,12 +1,13 @@
 import time
 from typing import List, Dict, Any, Callable
-from openrlhf.trainer.ppo_utils.tree_node import TreeNode
-
+from openrlhf.trainer.ppo_utils.tree_node import TreeNode,build_into_tree_format
+from openrlhf.trainer.ppo_utils.parallel_mcts import gather_paths
 from openrlhf.trainer.ppo_utils.evaluation import (
     check_result,
     query_local_vllm_completions_with_logprobs,
     query_local_vllm_ids_with_logprobs,
-    GLM_QA_PROMPT
+    GLM_QA_PROMPT,
+    get_qwen_remote_reward_model_value
 )
 
 # from tree_node import TreeNode
@@ -72,7 +73,8 @@ class EntropyGuidedChainLocalManager:
     def entropy_guided_chain(
         self,
         problem_str: str,
-        answer_str: str
+        answer_str: str,
+        args: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
         熵引导的链式推理。
@@ -227,8 +229,27 @@ class EntropyGuidedChainLocalManager:
                         extractor_urls=self.extractor_urls
                     )[-1]
                     pass_k_result.append(score)
+                    node.binary_score = score
                 else:
                     pass_k_result.append(0)
+                    node.binary_score = 0
+                if args["use_pure_binary"]:
+                    node.score = node.binary_score
+                else:
+                    value = get_qwen_remote_reward_model_value(
+                        urls= args["entropy_rm_urls"], question = problem_str, response = node.total_str)
+                    if args["use_pure_RM"]:
+                        a = 0.5
+                        b = -2.898
+                        x = a*(value-b)
+                        result = 1/(1+math.exp(-x))
+                        print("rm_score",value, result)
+                        node.score = result
+                    else:
+                        sigmoid_value = 1 / (1 + math.exp(-value))
+                        coeff = 0.5
+                        value = reward + coeff * sigmoid_value
+                        node.score = value
 
         paths['pass_k_result'] = pass_k_result
         paths['eval_time_use'] = time.time() - eval_time_start
@@ -238,7 +259,16 @@ class EntropyGuidedChainLocalManager:
         paths['tree_structures'] = [
             self.serialize_tree_list(tree_list) for tree_list in self.tree_lists
         ]
-
+        root,selected_terminals = build_into_tree_format(self.tree_lists,self.decode_fn,args['num_traces'])
+        paths = gather_paths(
+            selected_terminals = selected_terminals,
+            pass_k = args['num_traces'],
+            parent_shift = True,
+            use_orm_reward = args['use_orm_reward'],
+            use_chain_reward = args["use_chain_reward"],
+            step_level_norm = args["step_level_norm"],
+            use_state_value_reward = args["use_state_value_reward"],
+        )
         return paths
 
     def serialize_tree_list(self, tree_list):
@@ -253,12 +283,11 @@ class EntropyGuidedChainLocalManager:
             'mask': node.mask,
             'finish_reason': node.finish_reason,
             'total_str': node.total_str,
-            "total_token_ids": node.total_token_ids,
             'parent_node_idx': node.parent_node_idx,
             'parent_node_split_idx': node.parent_node_split_idx
         } for node in tree_list]
 
-    def process_single_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
+    def process_single_item(self, item: Dict[str, Any], args: Dict[str, Any]) -> Dict[str, Any]:
         """
         处理单个数据项。
 
@@ -268,10 +297,10 @@ class EntropyGuidedChainLocalManager:
         problem = item["problem"]
         answer = item["golden_answer"]
 
-        paths = self.entropy_guided_chain(problem, answer)
+        paths = self.entropy_guided_chain(problem, answer, args=args)
         result = {
             "problem": problem,
             "golden_answer": answer,
-            "path": paths,
+            "paths": paths,
         }
         return result

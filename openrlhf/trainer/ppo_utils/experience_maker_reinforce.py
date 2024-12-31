@@ -270,6 +270,7 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
             print(f"----------- normalized_rewards: {experience_reward}, reward_with_kl: {reward}")
         
         def reformat_reward_for_info(piece):
+            piece_origin = piece
             if len(piece.shape) == 1:
                 return piece
             elif self.strategy.args.process_supervision:
@@ -277,6 +278,7 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
                 piece = masked_mean(piece, mask, dim=-1)
             elif piece.shape[1] > 1:
                 piece = masked_mean(piece, action_mask, dim=-1)
+            print("reward to log",piece_origin, piece)
             return piece
 
         response_entropy = -(experiences["action_log_probs"] * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
