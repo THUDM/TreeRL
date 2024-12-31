@@ -3256,6 +3256,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         use_entropy_tree = kwargs.get("use_entropy_tree", False)
         
         if use_entropy_tree:
+            def decode_fn(ids):
+                return self.tokenizer.decode(ids,skip_special_tokens=False)
             print("use entropy tree")
             args = {
                 "temperature": kwargs.get("temperature", 1.2),
@@ -3270,7 +3272,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 "entropy_use_rm" : kwargs.get("entropy_use_rm", False),
                 "entropy_rm_urls" : ["http://172.18.73.102:8000/v1"],
             }
-            paths = parallel_entropy_guided_tree(item, llm, self.tokenizer, args, self.tokenize_fn)   
+            paths = parallel_entropy_guided_tree(item, llm, self.tokenizer, args, self.tokenize_fn, decode_fn)   
             input_ids = self.tokenize_fn([[item["problem"]],[None]],1024, device="cpu")["input_ids"][0].tolist()
             print(input_ids)
         else:

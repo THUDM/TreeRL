@@ -20,23 +20,7 @@ from tqdm import tqdm  # Import tqdm for progress display
 #     "/workspace/reason_data/checkpoint/glm-o1-2w-sft",
 #     trust_remote_code=True
 # )
-tokenizer = AutoTokenizer.from_pretrained(
-    "/data/o1-cloud/checkpoints/sft/glm_9b_1102",
-    trust_remote_code=True
-)
 
-
-def decode_fn(ids):
-    global tokenizer
-    return tokenizer.decode(ids, skip_special_tokens=False)
-
-def encode_fn(text, max_length=4096, add_special_tokens=False):
-    global tokenizer
-    sample_input_ids = tokenizer.encode(
-        text, add_special_tokens=add_special_tokens
-    )
-    sample_input_ids = sample_input_ids[-max_length:]
-    return sample_input_ids
 
 def select_paths_with_ratio(paths, num_traces=32):
     # Shuffle the paths to ensure random selection order
@@ -90,6 +74,7 @@ def parallel_entropy_guided_tree(
     tokenizer,
     args=None,
     tokenize_fn=None,
+    decode_fn=None,
 ):
     manager = EntropyGuidedChainLocalManager(
         args=args,
@@ -194,7 +179,10 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
 
 if __name__ == '__main__':
     # RL 调用参数
-    
+    tokenizer = AutoTokenizer.from_pretrained(
+        "/data/o1-cloud/checkpoints/sft/glm_9b_1102",
+        trust_remote_code=True
+    )
     def tokenize_fn(texts, max_length=2048, device="cpu"):
         sample_input_ids = tokenizer.encode(
             "[gMASK]<sop><|user|>\n" + texts[0][0], add_special_tokens=False)

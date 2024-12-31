@@ -81,17 +81,18 @@ class EntropyGuidedChainLocalManager:
         :param answer_str: 标准答案字符串。
         :return: 存储路径和结果的字典。
         """
-        init_prompt_with_template = GLM_QA_PROMPT.format(
-            prompt=problem_str, response=""
-        )
+        # init_prompt_with_template = GLM_QA_PROMPT.format(
+        #     prompt=problem_str, response=""
+        # )
 
         M = self.args["m"]
         N = self.args["n"]
         L = self.args["l"]
 
         init_prompt_ids_with_template = self.encode_fn(
-            [[init_prompt_with_template]],
+            [[problem_str]],
         )
+        print(init_prompt_ids_with_template)
 
         paths = self.paths
 
