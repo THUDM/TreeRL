@@ -71,7 +71,7 @@ def normalize_selected_terminals(paths):
 def parallel_entropy_guided_tree(
     item,
     llm,
-    tokenizer,
+    # tokenizer,
     args=None,
     tokenize_fn=None,
     decode_fn=None,
@@ -111,14 +111,14 @@ def parallel_entropy_guided_tree(
             x = a*(value-b)
             result = 1/(1+math.exp(-x))
             paths.append([{
-                "token_answer": tokenize_fn(context),
+                "token_answer": tokenize_fn(context,1024, device="cpu")["input_ids"][0],
                 "pass_ratio": pass_k,
                 "value": result,
             }])
         else:
             print("use binary as reward")
             paths.append([{
-                "token_answer": tokenize_fn(context),
+                "token_answer": tokenize_fn(context,1024, device="cpu")["input_ids"][0],
                 "pass_ratio": pass_k,
                 "value": pass_k,
             }])
@@ -217,10 +217,6 @@ if __name__ == '__main__':
         "entropy_use_rm": False,
         "entropy_rm_urls": ["http://172.18.73.102:8000/v1"]
     }
-    tokenizer = AutoTokenizer.from_pretrained(
-        '/workspace/reason_data/checkpoint/glm-o1-2w-sft',
-        trust_remote_code=True
-    )
     parallel_entropy_guided_tree(item, llm,tokenizer, args, tokenize_fn, decode_fn)
 
     # 以下是用于本地评测 omnimath-500 passrate 的代码

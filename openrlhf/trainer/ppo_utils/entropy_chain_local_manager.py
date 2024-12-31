@@ -90,8 +90,9 @@ class EntropyGuidedChainLocalManager:
         L = self.args["l"]
 
         init_prompt_ids_with_template = self.encode_fn(
-            [[problem_str]],
-        )
+            [[problem_str]],1024, device="cpu"
+        )["input_ids"][0]
+        
         print(init_prompt_ids_with_template)
 
         paths = self.paths
