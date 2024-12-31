@@ -1,5 +1,5 @@
 from typing import List, Optional, Callable
-
+# from openrlhf.trainer.ppo_utils.parallel_mcts import MCTSNode
 
 class TreeNode:
     def __init__(
@@ -7,7 +7,7 @@ class TreeNode:
         tree_idx: int,
         node_idx: int,
         decode_fn: Callable,
-        token_id_list: List[str],
+        token_id_list: List[int],
         log_prob_list: List[float],
         finish_reason: Optional[str] = None,
         is_end: bool = False,
@@ -162,3 +162,24 @@ class TreeNode:
         #     result += result[:top_n - len(result)]
 
         return result
+
+    # def build_into_tree_format(self,init_prompt,tree_lists) -> MCTSNode:
+    #     root = MCTSNode(
+    #         state=init_prompt,
+    #         answer="",
+    #         max_children=0,
+    #         depth=0
+    #     )
+    #     # root 的所有孩子是所有tree_lists[i][0]
+    #     for i, tree_list in enumerate(tree_lists):
+    #         # tree_list[i][0]的所有孩子的
+    #         root.children.append(
+    #             MCTSNode(
+    #                 state=tree_list[0].total_str,
+    #                 answer="",
+    #                 max_children=0,
+    #                 depth=1
+    #             )
+    #         )
+        
+        

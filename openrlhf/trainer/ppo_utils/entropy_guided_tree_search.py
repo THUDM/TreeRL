@@ -97,7 +97,7 @@ def parallel_entropy_guided_tree(
                 for tree in trees for node in tree]
 
     assert len(contexts) == len(pass_k_result)
-    embed()
+    # embed()
 
     paths = []
     
@@ -111,14 +111,14 @@ def parallel_entropy_guided_tree(
             x = a*(value-b)
             result = 1/(1+math.exp(-x))
             paths.append([{
-                "token_answer": tokenize_fn(context,1024, device="cpu")["input_ids"][0],
+                "token_answer": tokenize_fn([[context],[None]],1024, device="cpu")["input_ids"][0].tolist(),
                 "pass_ratio": pass_k,
                 "value": result,
             }])
         else:
             print("use binary as reward")
             paths.append([{
-                "token_answer": tokenize_fn(context,1024, device="cpu")["input_ids"][0],
+                "token_answer": tokenize_fn([[context],[None]],1024, device="cpu")["input_ids"][0].tolist(),
                 "pass_ratio": pass_k,
                 "value": pass_k,
             }])

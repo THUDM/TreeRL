@@ -833,9 +833,11 @@ def query_local_vllm_ids_with_logprobs(
 
     for try_counter in range(RETRY_COUNT):
         try:
-            outputs = llm.generate(
-                prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
-            )
+            # outputs = llm.generate(
+            #     prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
+            # )
+            outputs = ray.get(llm.generate.remote(
+                prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
 
             for output in outputs:
                 assert len(output.outputs) == 1
