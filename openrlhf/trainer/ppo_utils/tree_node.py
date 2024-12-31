@@ -61,6 +61,7 @@ class TreeNode:
         if parent_node is not None:
             self.aggregate_token_ids = parent_node.aggregate_token_ids + \
                 parent_node.token_id_list[:parent_node_split_idx]
+        self.total_token_ids: List[int] = self.aggregate_token_ids + self.token_id_list
 
         # --- 掩码信息 ---
         self.mask: List[bool] = [False] * len(self.token_str_list)

@@ -95,30 +95,33 @@ def parallel_entropy_guided_tree(
     #             for tree in trees for node in tree]
     contexts = [node['total_str']
                 for tree in trees for node in tree]
+    context_ids = [node['total_token_ids']
+                for tree in trees for node in tree]
 
-    assert len(contexts) == len(pass_k_result)
+    assert len(context_ids) == len(pass_k_result)
     # embed()
 
     paths = []
     
-    for context, pass_k in zip(contexts, pass_k_result):
+    for context, context_id, pass_k in zip(contexts, context_ids, pass_k_result):
         if args['entropy_use_rm']:
             print("use orm as reward")
             value = get_qwen_remote_reward_model_value(
-                args['entropy_rm_urls'], item['problem'], context)
+                args['entropy_rm_urls'], item['problem'], context
+            )
             a = 0.5
             b = -2.898
             x = a*(value-b)
             result = 1/(1+math.exp(-x))
             paths.append([{
-                "token_answer": tokenize_fn([[context],[None]],1024, device="cpu")["input_ids"][0].tolist(),
+                "token_answer": context_id,
                 "pass_ratio": pass_k,
                 "value": result,
             }])
         else:
             print("use binary as reward")
             paths.append([{
-                "token_answer": tokenize_fn([[context],[None]],1024, device="cpu")["input_ids"][0].tolist(),
+                "token_answer": context_id,
                 "pass_ratio": pass_k,
                 "value": pass_k,
             }])

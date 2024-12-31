@@ -253,6 +253,7 @@ class EntropyGuidedChainLocalManager:
             'mask': node.mask,
             'finish_reason': node.finish_reason,
             'total_str': node.total_str,
+            "total_token_ids": node.total_token_ids,
             'parent_node_idx': node.parent_node_idx,
             'parent_node_split_idx': node.parent_node_split_idx
         } for node in tree_list]
