@@ -240,7 +240,7 @@ def query_sglang_chat(
                 url,
                 json=request_data,
                 headers={"content-type": "application/json"},
-                timeout=1800
+                timeout=180
             )
 
             if response.status_code == 200:
@@ -258,6 +258,8 @@ def query_sglang_chat(
             if sleep_time > 30:
                 exit(1)
             print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
+            with open("/workspace/lurui/openrlhf-glm/logs/outputs/api_error.jsonl", "a") as f:
+                f.write(json.dumps({"url": url, "error": str(e),"request_data": request_data}) + "\n")
             time.sleep(sleep_time)
 
     return None
@@ -768,8 +770,10 @@ def query_local_vllm_completions_with_logprobs(
     log_probs_lists: List[List[float]] = []
     for try_counter in range(RETRY_COUNT):
         try:
-            outputs = llm.generate(
-                prompts=prompts, sampling_params=sampling_params)
+            # outputs = llm.generate(
+            #     prompts=prompts, sampling_params=sampling_params)
+            outputs = ray.get(llm.generate.remote(
+                prompts=prompts, sampling_params=sampling_params))
             for output in outputs:
                 log_probs_dict_lists = list(output.outputs[0].logprobs)
                 content_tokens = [[next(iter(log_probs_dict.values(

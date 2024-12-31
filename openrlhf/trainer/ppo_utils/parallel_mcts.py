@@ -138,7 +138,7 @@ eos_tokens_set = [151329,151336,151338]
 #     return decorator
 
 from collections import Counter
-def find_repeated_patterns(s, pattern_length=80, threshold=20):
+def find_repeated_patterns(s, pattern_length=50, threshold=20):
     from collections import defaultdict
     # pattern_counts = defaultdict(int)
     # for i in range(len(s) - pattern_length + 1):

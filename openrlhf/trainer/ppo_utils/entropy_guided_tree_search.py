@@ -2,8 +2,9 @@ from vllm import LLM
 
 from transformers import AutoTokenizer
 from openrlhf.trainer.ppo_utils.entropy_chain_local_manager import EntropyGuidedChainLocalManager
+from openrlhf.trainer.ppo_utils.evaluation import get_qwen_remote_reward_model_value
 from IPython import embed
-
+import math
 
 def tokenize_fn(texts, tokenizer,max_length=4096):
     sample_input_ids = tokenizer.encode(texts, add_special_tokens=False)
@@ -83,12 +84,32 @@ def parallel_entropy_guided_tree(
     assert len(contexts) == len(pass_k_result)
 
     paths = []
+    # for context, pass_k in zip(contexts, pass_k_result):
+    #     paths.append([{
+    #         "token_answer": tokenize_fn(context, tokenizer),
+    #         "pass_ratio": pass_k,
+    #         "value": pass_k,
+    #     }])
     for context, pass_k in zip(contexts, pass_k_result):
-        paths.append([{
-            "token_answer": tokenize_fn(context, tokenizer),
-            "pass_ratio": pass_k,
-            "value": pass_k,
-        }])
+        if args['entropy_use_rm']:
+            print("use orm as reward")
+            value = get_qwen_remote_reward_model_value(args['entropy_rm_urls'], item['problem'], context)
+            a = 0.5
+            b = -2.898
+            x = a*(value-b)
+            result = 1/(1+math.exp(-x))
+            paths.append([{
+                "token_answer": tokenize_fn(context, tokenizer),
+                "pass_ratio": pass_k,
+                "value": result,
+            }])
+        else:
+            print("use binary as reward")
+            paths.append([{
+                "token_answer": tokenize_fn(context, tokenizer),
+                "pass_ratio": pass_k,
+                "value": pass_k,
+            }])
     paths = select_paths_with_ratio(paths, args['num_traces'])
     paths = normalize_selected_terminals(paths)
     return paths
@@ -115,6 +136,8 @@ if __name__ == '__main__':
         "extractor_urls": ["http://172.18.75.109:8000/v1"],
         "eos_tokens": ["<|user|>", "<|endoftext|>", "<|observation|>"],
         "num_traces": 32,
+        "entropy_use_rm": False,
+        "entropy_rm_urls": ["http://172.18.73.102:8000/v1"]
     }
     tokenizer = AutoTokenizer.from_pretrained(
         '/workspace/reason_data/checkpoint/glm-o1-2w-sft',

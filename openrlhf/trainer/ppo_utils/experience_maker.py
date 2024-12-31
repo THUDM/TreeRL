@@ -3267,6 +3267,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 "extractor_urls": ["http://172.18.74.52:8000/v1"],
                 "eos_tokens": ["<|user|>", "<|endoftext|>", "<|observation|>"],
                 "num_traces": num_trace_per_sample,
+                "entropy_use_rm" : kwargs.get("entropy_use_rm", False),
+                "entropy_rm_urls" : ["http://172.18.73.102:8000/v1"],
             }
             paths = parallel_entropy_guided_tree(item, llm, self.tokenizer, args)   
             input_ids = self.tokenize_fn([[item["problem"]],[None]],1024, device="cpu")["input_ids"][0].tolist()

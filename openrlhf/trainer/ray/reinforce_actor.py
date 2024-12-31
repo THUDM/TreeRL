@@ -358,6 +358,7 @@ class ActorModelRayActor(BasePPORole):
             m = args.m,
             n = args.n,
             l = args.l,
+            entropy_use_rm = args.entropy_use_rm,
         )
 
         trainer.fit(self.prompts_dataloader, self.pretrain_dataloader, args)
