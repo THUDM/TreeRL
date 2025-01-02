@@ -14,7 +14,7 @@ do
     python3 -m vllm.entrypoints.openai.api_server \
         --model $MODEL_PATH \
         --served-model-name $MODEL_NAME \
-        --max-model-len 8192 \
+        --max-model-len 4096 \
         --trust-remote-code \
         --host=0.0.0.0 --port=$port \
         --tensor-parallel-size 1 \

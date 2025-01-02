@@ -227,7 +227,7 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces) -> MCTSNode:
                 first_child_split_idx = len(tree_node.token_id_list)
                 is_terminal = True
                 R = tree_node.score
-                if R == 1:
+                if tree_node.binary_score == 1:
                     main_chain = True
             else:
                 first_child_split_idx = child_split_indices[0]
@@ -266,7 +266,7 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces) -> MCTSNode:
                         next_split_idx = len(tree_node.token_id_list)
                         is_terminal = True
                         R = tree_node.score
-                        if R == 1:
+                        if tree_node.binary_score == 1:
                             main_chain = True
                     
                     # 创建当前段后的子段

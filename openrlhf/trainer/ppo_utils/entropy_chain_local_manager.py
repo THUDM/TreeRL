@@ -9,6 +9,7 @@ from openrlhf.trainer.ppo_utils.evaluation import (
     GLM_QA_PROMPT,
     get_qwen_remote_reward_model_value
 )
+import math
 
 # from tree_node import TreeNode
 # from evaluation import (
@@ -243,7 +244,7 @@ class EntropyGuidedChainLocalManager:
                         b = -2.898
                         x = a*(value-b)
                         result = 1/(1+math.exp(-x))
-                        print("rm_score",value, result)
+                        print("entropy rm_score",value, result)
                         node.score = result
                     else:
                         sigmoid_value = 1 / (1 + math.exp(-value))
