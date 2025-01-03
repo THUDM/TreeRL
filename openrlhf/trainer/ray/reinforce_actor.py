@@ -358,6 +358,7 @@ class ActorModelRayActor(BasePPORole):
             m = args.m,
             n = args.n,
             l = args.l,
+            system_prompt = args.system_prompt,
         )
 
         trainer.fit(self.prompts_dataloader, self.pretrain_dataloader, args)

@@ -75,7 +75,8 @@ class EntropyGuidedChainLocalManager:
         self,
         problem_str: str,
         answer_str: str,
-        args: Dict[str, Any] = None
+        args: Dict[str, Any] = None,
+        system_prompt=None,
     ) -> Dict[str, Any]:
         """
         熵引导的链式推理。
@@ -93,7 +94,7 @@ class EntropyGuidedChainLocalManager:
         L = self.args["l"]
 
         init_prompt_ids_with_template = self.encode_fn(
-            [[problem_str],[None]],1024, device="cpu"
+            [[problem_str],[None]],1024, device="cpu",system_prompt=system_prompt
         )["input_ids"][0].tolist()
         
         print(init_prompt_ids_with_template)

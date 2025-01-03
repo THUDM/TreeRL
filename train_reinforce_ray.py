@@ -298,6 +298,7 @@ if __name__ == "__main__":
     parser.add_argument("--remote_rm_url", type=str, nargs="+", default=None)
     parser.add_argument("--label_key", type=str, default=None)
     parser.add_argument("--source_key", type=str, default=None)
+    parser.add_argument("--system_prompt", type=str, default=None)
     parser.add_argument("--normalize_reward_from_multi_traces_with_rloo", action="store_true", default=False)
     parser.add_argument("--normalize_reward_mean_only", action="store_true", default=False)
     parser.add_argument("--mask_repeated_samples", action="store_true", default=False)

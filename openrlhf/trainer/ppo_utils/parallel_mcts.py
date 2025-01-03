@@ -346,6 +346,7 @@ class MCTSr(BaseModel):
     use_pure_RM:bool = False
     use_pure_binary:bool = False
     shallow_enwide: bool = False
+    system_prompt :str = ""
 
     # def __init__(self, temperature, top_p, model_name, stops=None):
     #     super().__init__()
@@ -578,7 +579,7 @@ class MCTSr(BaseModel):
         #         f"Backbone {self.backbone} not implemented")
         
         # init_prompt = self.tokenize_fn([[self.problem],[None]],self.prompt_max_len, device="cpu")
-        init_prompt = self.tokenize_fn([[self.problem],[None]],self.prompt_max_len, device="cpu")["input_ids"][0]
+        init_prompt = self.tokenize_fn([[self.problem],[None]],self.prompt_max_len, device="cpu",system_prompt=self.system_prompt)["input_ids"][0]
 
         self.root = MCTSNode(
             state=init_prompt,
@@ -1334,7 +1335,8 @@ def mcts_worker(
     detokenize_fn,
     prompt_key="problem",
     answer_key="golden_answer",
-    args=None
+    args=None,
+    system_prompt=None,
 ):
     # 随机 sleep 一段时间，一分钟以内
     # time.sleep(random.randint(0, 60))
@@ -1376,6 +1378,7 @@ def mcts_worker(
         use_pure_RM = args["use_pure_RM"],
         use_pure_binary = args["use_pure_binary"],
         shallow_enwide = args["shallow_enwide"],
+        system_prompt=system_prompt,
     )
     # print(mcts.max_children)
     start_time = time.time()
@@ -1417,8 +1420,8 @@ def mcts_worker(
         os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs", exist_ok=True)
         with open("/workspace/lurui/openrlhf-glm/logs/outputs/response_type.jsonl", "a",encoding="utf-8") as f:
             f.write("use chain_worker\n")
-        # init_prompt = tokenize_fn([[problem],[None]],args["prompt_max_len"], device="cpu")
-        init_prompt = tokenize_fn([[problem],[None]],args["prompt_max_len"], device="cpu")["input_ids"][0].tolist()
+        # init_prompt = tokenize_fn([[problem],[None]],args["prompt_max_len"], device="cpu",system_prompt=system_prompt)
+        init_prompt = tokenize_fn([[problem],[None]],args["prompt_max_len"], device="cpu",system_prompt=system_prompt)["input_ids"][0].tolist()
         paths = chain_worker(item, llm, init_prompt, prompt_key, answer_key, args)
         return paths, init_prompt
     else:
@@ -1551,5 +1554,5 @@ def pass_rate(paths):
     return pass_num
 
 # 封装为一个函数,输入为item,输出为paths
-def parallel_mcts(item, llm, tokenize_fn, detokenize_fn, args):
-    return mcts_worker(item, llm, tokenize_fn, detokenize_fn, args["prompt_key"], args["answer_key"], args)
+def parallel_mcts(item, llm, tokenize_fn, detokenize_fn, args,system_prompt=None):
+    return mcts_worker(item, llm, tokenize_fn, detokenize_fn, args["prompt_key"], args["answer_key"], args,system_prompt)
