@@ -313,9 +313,15 @@ def get_stem_eval(
         # print(f"stem_remote_reward={_rm_based_reward}")
 
         ## 新实现：只用rm
+        import math
         remote_model_urls = remote_urls["math_RM"]
         _rm_based_reward = get_qwen_remote_reward_model_value(remote_model_urls, query, response)
-        raw_remote_reward = _rm_based_reward
+        a = 0.5
+        b = -2.898
+        x = a*(_rm_based_reward-b)
+        result = 1/(1+math.exp(-x))
+        print("use pure rm-sigmoid in chain", result)
+        raw_remote_reward = result
         # print(f"stem_remote_reward={_rm_based_reward}")
     else:
         print("use binary reward only")

@@ -46,7 +46,7 @@ def get_checkpoint_paths(base_dir, checkpoint_dirs=None):
         if dir_path.exists():
             # checkpoints = list(dir_path.glob('**/*_actor_global_step*'))
             #匹配所有带_actor_global_step或带epoch的文件
-            checkpoints = list(dir_path.glob('**/*_actor_global_step*')) + list(dir_path.glob('**/*epoch_*'))
+            checkpoints = list(dir_path.glob('**/*_actor_global_step*')) + list(dir_path.glob('**/*epoch_*')) + list(dir_path.glob('**/*hf_*'))
             if checkpoints:
                 print(f"Found {len(checkpoints)} checkpoints in {dir_name}")
                 all_checkpoints.extend([str(p) for p in checkpoints])

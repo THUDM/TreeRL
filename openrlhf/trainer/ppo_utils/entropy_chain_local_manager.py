@@ -249,7 +249,7 @@ class EntropyGuidedChainLocalManager:
                     else:
                         sigmoid_value = 1 / (1 + math.exp(-value))
                         coeff = 0.5
-                        value = reward + coeff * sigmoid_value
+                        value = node.binary_score + coeff * sigmoid_value
                         node.score = value
 
         paths['pass_k_result'] = pass_k_result

@@ -16,5 +16,5 @@ TUNED_MODEL_NAME=ms32-entropy-tree-advantage-value-orm
 
 python auto_upload.py \
     --base_path $EVAL_DIR/$TUNED_MODEL_NAME \
-    --project_name openrlhf_math_mcts \
+    --project_name openrlhf_code_rl \
     --run_name $TUNED_MODEL_NAME-eval \

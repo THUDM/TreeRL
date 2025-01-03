@@ -247,9 +247,9 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
                 generate_kwargs["gamma"],
                 generate_kwargs["lambd"],
             )
-            print("advantage",advantage)
-            with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
-                f.write(json.dumps({"advantage":advantage.tolist()}) + "\n")
+            # print("advantage",advantage)
+            # with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
+            #     f.write(json.dumps({"advantage":advantage.tolist()}) + "\n")
         else:
             reward, kl = compute_reward_naive(
                 experience_reward,
@@ -282,15 +282,15 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
             return piece
 
         response_entropy = -(experiences["action_log_probs"] * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
-        with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
-            sequences = experiences["sequences"]
-            num_actions = action_mask.size(1)
-            for s in range(sequences.shape[0]):
-                match_list = []
-                for i in range(reward[0].shape[0]):
-                    str_seq = self.tokenizer.decode([sequences[s][-num_actions+i].to("cpu").tolist()], skip_special_tokens=True)
-                    match_list.append({"reward":reward[s][i].item(),"content":str_seq})
-                f.write(json.dumps(match_list) + "\n")
+        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
+        #     sequences = experiences["sequences"]
+        #     num_actions = action_mask.size(1)
+        #     for s in range(sequences.shape[0]):
+        #         match_list = []
+        #         for i in range(reward[0].shape[0]):
+        #             str_seq = self.tokenizer.decode([sequences[s][-num_actions+i].to("cpu").tolist()], skip_special_tokens=True)
+        #             match_list.append({"reward":reward[s][i].item(),"content":str_seq})
+        #         f.write(json.dumps(match_list) + "\n")
         
         if use_vinevalue:
             info = {
