@@ -255,11 +255,12 @@ class NaiveExperienceMaker(ABC):
         self.strategy = strategy
         self.reward_fn = reward_fn
         self.tokenizer_reward = tokenizer_reward
-        self.current_model = "chatglm" if "glm" in strategy.args.pretrain else ""
+        # self.current_model = "chatglm" if "glm" in strategy.args.pretrain else ""
+        self.current_model = strategy.args.pretrain
         
     # tokenizer
     def tokenize_fn(self, texts, max_length, device):
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             return tokenize_fn_chatglm(self.tokenizer, texts, max_length, device)
         if "qwen" or "llama" in self.current_model.lower():
             return tokenize_fn_llama(self.tokenizer, texts, max_length, device)
@@ -1376,7 +1377,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         rank = torch.distributed.get_rank()
         llm = self.vllm_engines[rank % len(self.vllm_engines)]
 
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
             eos_token_set = (self.tokenizer.convert_tokens_to_ids("<|user|>"), self.tokenizer.convert_tokens_to_ids("<|observation|>"), self.tokenizer.eos_token_id)
         else:

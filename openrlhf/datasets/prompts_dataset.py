@@ -121,7 +121,8 @@ class PromptDataset(Dataset):
     #         return self.prompts[idx]
 
     def __getitem__(self, idx):
-        if "glm" in self.current_model or "llama" in self.current_model or "qwen" in self.current_model:
+        print("current model",self.current_model)
+        if "glm" in self.current_model.lower() or "llama" in self.current_model.lower() or "qwen" in self.current_model.lower():
             history = self.history[idx]
             prompt = self.prompts[idx]
             label = self.labels[idx]

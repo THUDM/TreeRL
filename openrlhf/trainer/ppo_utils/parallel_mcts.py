@@ -63,7 +63,7 @@ ROOT_UCT_SCORE = 10_000
 QUEUE_SIZE = 10000
 NUM_PROCESS = 50
 from transformers import AutoTokenizer
-tokenizer = AutoTokenizer.from_pretrained('/data/o1-cloud/checkpoints/sft/glm_9b_1102', trust_remote_code=True)
+# tokenizer = AutoTokenizer.from_pretrained('/workspace/lurui/models/Qwen2.5-7B-Instruct', trust_remote_code=True)
 
 with open("/workspace/lurui/openrlhf-glm/openrlhf/trainer/ppo_utils/configs/api_config_llama3.1_max_request_1.json") as f:
     api_checker_config = json.load(f)
@@ -94,8 +94,6 @@ EXTRACTOR_URLS = []
 ips = api_extractor_config['ip']
 for key, value in ips.items():
     EXTRACTOR_URLS.extend([key for _ in range(value)])
-
-eos_tokens_set = [151329,151336,151338]
 
 # import cProfile
 # import line_profiler
@@ -346,8 +344,8 @@ class MCTSr(BaseModel):
     use_pure_RM:bool = False
     use_pure_binary:bool = False
     shallow_enwide: bool = False
-    system_prompt :str = ""
-
+    system_prompt :Optional[str] = None
+    eos_tokens_set :List[int] = [151329,151336,151338]
     # def __init__(self, temperature, top_p, model_name, stops=None):
     #     super().__init__()
 
@@ -580,6 +578,10 @@ class MCTSr(BaseModel):
         
         # init_prompt = self.tokenize_fn([[self.problem],[None]],self.prompt_max_len, device="cpu")
         init_prompt = self.tokenize_fn([[self.problem],[None]],self.prompt_max_len, device="cpu",system_prompt=self.system_prompt)["input_ids"][0]
+        if self.backbone == "glm":
+            eos_tokens_set = [151329,151336,151338]
+        elif self.backbone == "qwen":
+            eos_tokens_set = [151645]
 
         self.root = MCTSNode(
             state=init_prompt,
@@ -681,7 +683,7 @@ class MCTSr(BaseModel):
     def expand(self, nodes):
         if len(nodes) == 0:
             return [], 0
-        stops = get_stops()
+        stops = get_stops(self.backbone)
         all_children_token_num = 0
         max_tokens_per_step = self.max_token_num
         max_attempts = 3
@@ -752,7 +754,7 @@ class MCTSr(BaseModel):
                     continue  # 如果响应为空或未结束，跳过
 
                 action = response
-                if not ((stop_token is None) or (stop_token in eos_tokens_set)):
+                if not ((stop_token is None) or (stop_token in self.eos_tokens_set)):
                     # action += stop_token
                     stop_token_str = self.detokenize_fn([stop_token])[0]
                     action += stop_token_str
@@ -790,7 +792,7 @@ class MCTSr(BaseModel):
                 else:
                     repeat = False
 
-                if (stop_token is None) or (stop_token in eos_tokens_set) or repeat:
+                if (stop_token is None) or (stop_token in self.eos_tokens_set) or repeat:
                     if_finish = True
                 else:
                     if_finish = False
@@ -1429,10 +1431,11 @@ def mcts_worker(
             f.write("use mcts_worker\n")
         return paths,root.state
 
-# def get_stops():
-#     return ["<|user|>", "<|endoftext|>", "<|observation|>","\n\n"]
-def get_stops():
-    return [271, 151336, 151329,151338, 2533, 382, 1447, 21467, 692]
+def get_stops(backbone="glm"):
+    if backbone == "glm":
+        return [271, 151336, 151329,151338, 2533, 382, 1447, 21467, 692]
+    elif backbone == "qwen":
+        return [151645,271,2533, 382, 1447,21518,692]
 
 def normalize_selected_terminals(selected_terminals: list[MCTSNode]):
     leaf_orm_value = [leaf.accumulated_value for leaf in selected_terminals]

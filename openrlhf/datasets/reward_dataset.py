@@ -153,7 +153,7 @@ class RewardDataset(Dataset):
         self.max_length = max_length
 
         self.current_model = strategy.args.pretrain
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             self.eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
         else:
             self.eos_token_id = None
@@ -589,7 +589,7 @@ class RewardProcessDataset(Dataset):
         self.max_length = max_length
 
         self.current_model = strategy.args.pretrain
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             self.eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
         else:
             self.eos_token_id = None
@@ -764,7 +764,7 @@ class RewardProcessDatasetInference(Dataset):
         self.max_length = max_length
 
         self.current_model = strategy.args.pretrain
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             self.eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
         else:
             self.eos_token_id = None
@@ -885,7 +885,7 @@ class RewardMultiTaskDataset(Dataset):
         self.max_length = max_length
 
         self.current_model = strategy.args.pretrain
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             self.eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
         else:
             self.eos_token_id = None

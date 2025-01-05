@@ -87,7 +87,8 @@ class SFTDataset(Dataset):
         self.strategy = strategy
         self.pretrain_mode = pretrain_mode
         self.max_length = max_length
-        self.current_model = "chatglm" if "glm" in strategy.args.pretrain else ""
+        # self.current_model = "chatglm" if "glm" in strategy.args.pretrain else ""
+        self.current_model = strategy.args.pretrain
         self.history = []
         self.prompt_data_indices = []
         

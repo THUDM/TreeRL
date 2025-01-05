@@ -45,9 +45,9 @@ ray job submit --address="http://127.0.0.1:8265" \
     --ref_num_gpus_per_node 8 \
     --reward_num_nodes 0 \
     --reward_num_gpus_per_node 8 \
-    --actor_num_nodes 2 \
+    --actor_num_nodes 1 \
     --actor_num_gpus_per_node 8 \
-    --vllm_num_engines 16 \
+    --vllm_num_engines 8 \
     --vllm_tensor_parallel_size 1 \
     --pretrain /workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381 \
     --reward_pretrain /workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381 \

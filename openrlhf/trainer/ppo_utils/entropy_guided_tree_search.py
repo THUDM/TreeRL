@@ -74,6 +74,7 @@ def parallel_entropy_guided_tree(
     args=None,
     tokenize_fn=None,
     decode_fn=None,
+    system_prompt=None,
 ):
     manager = EntropyGuidedChainLocalManager(
         args=args,
