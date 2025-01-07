@@ -456,9 +456,9 @@ def _tokenize_fn_llama(tokenizer, prompt, history, max_length,system_prompt=None
     sample_input_ids = tokenizer.apply_chat_template(conversation)
     sample_input_ids = sample_input_ids[-max_length:] + tokenizer.encode("<|im_start|>assistant\n")
     # 把sample_input_ids decode成文本
-    with open("/workspace/lurui/openrlhf-glm/logs/outputs/sample_input_ids.jsonl", "a") as f:
-        str_input_ids = tokenizer.decode(sample_input_ids)
-        f.write(json.dumps({"sequences":str_input_ids,"system_prompt":system_prompt}) + "\n")
+    # with open("/workspace/lurui/openrlhf-glm/logs/outputs/sample_input_ids.jsonl", "a") as f:
+    #     str_input_ids = tokenizer.decode(sample_input_ids)
+    #     f.write(json.dumps({"sequences":str_input_ids,"system_prompt":system_prompt}) + "\n")
     return sample_input_ids
 
 
@@ -559,7 +559,7 @@ def extract_qa_for_qwen(query):
     if "<|im_start|>assistant\n" not in query:
         return "Bad Question", "*"
     if query.strip().endswith("<|im_end|>"):
-        query = query[:-11]
+        query = query[:-10]
     query = query.split("<|im_end|>\n<|im_start|>assistant\n")
     question = query[-2].strip()
     answer = query[-1].strip()
@@ -1879,7 +1879,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                             question, answer = extract_qa_for_qwen(item)
                             queries[i] = (question, answer)
                             with open("/workspace/lurui/openrlhf-glm/logs/outputs/queries.jsonl", "a") as f:
-                                f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer}) + "\n")
+                                f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"multi-chain"}) + "\n")
                             # raise NotImplementedError
                     assert len(queries) == len(micro_labels), f"query={len(queries)}, labels={len(labels)}"
                     # r_refs.append((queries, micro_labels))
@@ -2302,7 +2302,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                             # with open(file_name, "a") as f:
                             #     f.write(json.dumps(new_data) + "\n")
                             with open("/workspace/lurui/openrlhf-glm/logs/outputs/queries.jsonl", "a") as f:
-                                f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer}) + "\n")
+                                f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"tree"}) + "\n")
                             # print(question,answer)
                         else:
                             question, answer = extract_qa_for_qwen(item)
@@ -2312,7 +2312,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                             # with open(file_name, "a") as f:
                             #     f.write(json.dumps(new_data) + "\n")
                             with open("/workspace/lurui/openrlhf-glm/logs/outputs/queries.jsonl", "a") as f:
-                                f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer}) + "\n")
+                                f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"tree"}) + "\n")
                             # raise NotImplementedError
                     assert len(queries) == len(micro_labels), f"query={len(queries)}, labels={len(labels)}"
                     # r_refs.append((queries, micro_labels))
@@ -3268,8 +3268,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 output_ids[min(output_len, len(output_ids) - 1)] = eos_token_id
                 overlong.append(0)
             else:
-                with open("/workspace/lurui/openrlhf-glm/logs/outputs/overlong.jsonl","a") as f:
-                    f.write(json.dumps({"output":output.outputs[0].text,"overlong":False,"stop_token":int(output_ids[output_len - 1])}) + "\n")
+                # with open("/workspace/lurui/openrlhf-glm/logs/outputs/overlong.jsonl","a") as f:
+                #     f.write(json.dumps({"output":output.outputs[0].text,"overlong":False,"stop_token":int(output_ids[output_len - 1])}) + "\n")
                 overlong.append(1)
                 
             # concat input and output
