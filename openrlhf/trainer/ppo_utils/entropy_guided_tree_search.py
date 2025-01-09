@@ -1,10 +1,10 @@
 import random
 from vllm import LLM
 from transformers import AutoTokenizer
-from openrlhf.trainer.ppo_utils.entropy_chain_local_manager import EntropyGuidedChainLocalManager
-
-# from entropy_chain_local_manager import EntropyGuidedChainLocalManager
-# from evaluation import get_qwen_remote_reward_model_value
+try:
+    from openrlhf.trainer.ppo_utils.entropy_chain_local_manager import EntropyGuidedChainLocalManager
+except:
+    from entropy_chain_local_manager import EntropyGuidedChainLocalManager
 
 import math
 import os
@@ -13,7 +13,7 @@ from multiprocessing import Process
 from filelock import FileLock
 
 from IPython import embed
-from tqdm import tqdm  # Import tqdm for progress display
+from tqdm import tqdm
 
 # tokenizer = AutoTokenizer.from_pretrained(
 #     "/workspace/reason_data/checkpoint/glm-o1-2w-sft",
@@ -86,12 +86,12 @@ def parallel_entropy_guided_tree(
         eos_tokens_set=args['eos_tokens'],
     )
 
-    result = manager.process_single_item(item,args)
+    result = manager.process_single_item(item, args)
     paths = result["paths"]
     return paths
 
 
-def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluator_urls, extractor_urls, eos_tokens, output_file,tokenize_fn):
+def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluator_urls, extractor_urls, eos_tokens, output_file, tokenize_fn):
     '''
     仅用作评测本地 vllm 推理性能，不进入 RL 训练
     '''
@@ -113,12 +113,14 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
         args = {
             "temperature": 1.2,
             "top_p": 0.9,
-            "m": 16,
-            "n": 2,
-            "l": 1,
+            "m": 64,
+            "n": 0,
+            "l": 0,
+            "t": 0,
             "evaluator_urls": evaluator_urls,
             "extractor_urls": extractor_urls,
             "eos_tokens": eos_tokens,
+            "use_pure_binary": True,
         }
 
         manager = EntropyGuidedChainLocalManager(
@@ -131,7 +133,7 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
             eos_tokens_set=args['eos_tokens'],
         )
 
-        result = manager.process_single_item(item)
+        result = manager.process_single_item(item, args)
 
         if output_file:
             lock = FileLock(f"{output_file}.lock")
@@ -143,80 +145,95 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
 
 if __name__ == '__main__':
     # RL 调用参数
+    # MODEL_PATH = "/data/o1-cloud/checkpoints/sft/glm_9b_1102"
+
+    MODEL_PATH = "/workspace/o1_yun/checkpoints/sft/glm_9b_1102"
     tokenizer = AutoTokenizer.from_pretrained(
-        "/data/o1-cloud/checkpoints/sft/glm_9b_1102",
+        MODEL_PATH,
         trust_remote_code=True
     )
-    def tokenize_fn(texts, max_length=2048, device="cpu"):
+
+    # def tokenize_fn(texts, max_length=2048, device="cpu", system_prompt=None):
+    #     sample_input_ids = tokenizer.encode(
+    #         "[gMASK]<sop><|user|>\n" + texts[0][0],
+    #         add_special_tokens=False
+    #     )
+    #     sample_input_ids = sample_input_ids[-max_length:] + \
+    #         tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
+    #     return sample_input_ids
+
+    import torch
+
+    def tokenize_fn(texts, max_length=2048, device="cpu", system_prompt=None):
         sample_input_ids = tokenizer.encode(
             "[gMASK]<sop><|user|>\n" + texts[0][0], add_special_tokens=False)
         sample_input_ids = sample_input_ids[-max_length:] + \
             tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
-        return sample_input_ids
-    
+        output = {"input_ids": [torch.tensor(sample_input_ids)]}
+        return output
+
     def decode_fn(ids):
-        return tokenizer.decode(ids,skip_special_tokens=False)
-    
-    item = {
-        "problem": "The graph of $$x^4=x^2 y^2$$ is a union of $$n$$ different lines. What is the value of $$n$$ ?",
-        "golden_answer": "3"
-    }
-    llm = LLM(
-        model="/data/o1-cloud/checkpoints/sft/glm_9b_1102",
-        tensor_parallel_size=1,
-        trust_remote_code=True,
-        seed=3407
-    )
-    args = {
-        "temperature": 1.2,
-        "top_p": 0.9,
-        "m": 8,
-        "n": 4,
-        "l": 2,
-        "evaluator_urls": ["http://172.18.75.109:8000/v1"],
-        "extractor_urls": ["http://172.18.75.109:8000/v1"],
-        # "eos_tokens": ["<|user|>", "<|endoftext|>", "<|observation|>"],
-        "eos_tokens": [151329, 151336, 151338],
-        "num_traces": 32,
-        "entropy_rm_urls": ["http://172.18.73.102:8000/v1"],
-        "use_pure_binary" :True,
-        "use_pure_RM" : False,
-        "use_orm_reward" : False,
-        "use_chain_reward" : False,
-        "step_level_norm" : True,
-        "use_state_value_reward" :False,
-        
-    }
-    paths = parallel_entropy_guided_tree(item, llm, args, tokenize_fn, decode_fn)
-    with open("/workspace/lurui/openrlhf-mcts/data/entropy_paths.jsonl","w",encoding="utf-8") as f:
-        json.dump({"path":paths},f,ensure_ascii=False)
+        return tokenizer.decode(ids, skip_special_tokens=False)
+
+    # item = {
+    #     "problem": "The graph of $$x^4=x^2 y^2$$ is a union of $$n$$ different lines. What is the value of $$n$$ ?",
+    #     "golden_answer": "3"
+    # }
+    # llm = LLM(
+    #     model=MODEL_PATH,
+    #     tensor_parallel_size=1,
+    #     trust_remote_code=True,
+    #     seed=3407
+    # )
+    # args = {
+    #     "temperature": 1.2,
+    #     "top_p": 0.9,
+    #     "m": 8,
+    #     "n": 4,
+    #     "l": 2,
+    #     "evaluator_urls": ["http://172.18.75.109:8000/v1"],
+    #     "extractor_urls": ["http://172.18.75.109:8000/v1"],
+    #     # "eos_tokens": ["<|user|>", "<|endoftext|>", "<|observation|>"],
+    #     "eos_tokens": [151329, 151336, 151338],
+    #     "num_traces": 32,
+    #     "entropy_rm_urls": ["http://172.18.73.102:8000/v1"],
+    #     "use_pure_binary" : True,
+    #     "use_pure_RM" : False,
+    #     "use_orm_reward" : False,
+    #     "use_chain_reward" : False,
+    #     "step_level_norm" : True,
+    #     "use_state_value_reward" :False,
+    # }
+    # paths = parallel_entropy_guided_tree(item, llm, args, tokenize_fn, decode_fn)
+    # with open("/workspace/lurui/openrlhf-mcts/data/entropy_paths.jsonl","w",encoding="utf-8") as f:
+    #     json.dump({"path":paths},f,ensure_ascii=False)
 
     # 以下是用于本地评测 omnimath-500 passrate 的代码
-    # eval_path = "/workspace/lurui/agentic-reason/TreeSearch/entropy_tree/data/omnimath-500-with-difficulty.jsonl"
-    # output_file = "./res/output.jsonl"
-    # tokenizer_path = "/workspace/reason_data/checkpoint/glm-o1-2w-sft"
-    # evaluator_urls = ["http://172.18.74.194:8000/v1"]
-    # extractor_urls = ["http://172.18.75.153:8000/v1"]
-    # eos_tokens = [151329, 151336, 151338]
+    eval_path = "/workspace/lurui/agentic-reason/TreeSearch/entropy_tree/data/omnimath-500-with-difficulty.jsonl"
+    output_file = "./res/output_64_0_0_0_0107.jsonl"
+    tokenizer_path = "/workspace/reason_data/checkpoint/glm-o1-2w-sft"
+    evaluator_urls = ["http://172.18.74.194:8000/v1"]
+    extractor_urls = ["http://172.18.74.52:8000/v1"]
+    eos_tokens = [151329, 151336, 151338]
 
-    # # Read input data
-    # with open(eval_path, "r", encoding="utf-8") as f:
-    #     datas = [json.loads(line) for line in f]
+    # Read input data
+    with open(eval_path, "r", encoding="utf-8") as f:
+        datas = [json.loads(line) for line in f]
 
-    # # Number of GPUs
-    # num_gpus = 8
+    # Number of GPUs
+    num_gpus = 8
 
-    # # Split data across GPUs
-    # data_batches = [datas[i::num_gpus] for i in range(num_gpus)]
+    # Split data across GPUs
+    data_batches = [datas[i::num_gpus] for i in range(num_gpus)]
 
-    # # Create a process for each GPU
-    # processes = []
-    # for gpu_id, data_batch in enumerate(data_batches):
-    #     p = Process(target=process_single_data_for_each_gpu, args=(
-    #         data_batch, gpu_id, tokenizer_path, evaluator_urls, extractor_urls, eos_tokens, output_file,tokenize_fn))
-    #     processes.append(p)
-    #     p.start()
+    # Create a process for each GPU
+    processes = []
+    for gpu_id, data_batch in enumerate(data_batches):
+        p = Process(target=process_single_data_for_each_gpu, args=(
+            data_batch, gpu_id, tokenizer_path, evaluator_urls, extractor_urls, eos_tokens, output_file, tokenize_fn))
+        processes.append(p)
+        p.start()
 
-    # # Wait for all processes to complete
-    # for p in processes:
-    #     p.join()
+    # Wait for all processes to complete
+    for p in processes:
+        p.join()

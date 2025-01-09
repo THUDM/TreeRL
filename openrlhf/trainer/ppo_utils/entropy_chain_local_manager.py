@@ -1,24 +1,26 @@
 import time
-from typing import List, Dict, Any, Callable
-from openrlhf.trainer.ppo_utils.tree_node import TreeNode,build_into_tree_format
-from openrlhf.trainer.ppo_utils.parallel_mcts import gather_paths
-from openrlhf.trainer.ppo_utils.evaluation import (
-    check_result,
-    query_local_vllm_completions_with_logprobs,
-    query_local_vllm_ids_with_logprobs,
-    GLM_QA_PROMPT,
-    get_qwen_remote_reward_model_value
-)
 import math
-
-# from tree_node import TreeNode
-# from evaluation import (
-#     check_result,
-#     query_local_vllm_completions_with_logprobs,
-#     query_local_vllm_ids_with_logprobs,
-#     GLM_QA_PROMPT
-# )
-
+from typing import List, Dict, Any, Callable
+try:
+    from openrlhf.trainer.ppo_utils.tree_node import TreeNode, build_into_tree_format
+    from openrlhf.trainer.ppo_utils.parallel_mcts import gather_paths
+    from openrlhf.trainer.ppo_utils.evaluation import (
+        check_result,
+        query_local_vllm_completions_with_logprobs,
+        query_local_vllm_ids_with_logprobs,
+        GLM_QA_PROMPT,
+        get_qwen_remote_reward_model_value
+    )
+except:
+    from tree_node import TreeNode, build_into_tree_format
+    from parallel_mcts import gather_paths
+    from evaluation import (
+        check_result,
+        query_local_vllm_completions_with_logprobs,
+        query_local_vllm_ids_with_logprobs,
+        GLM_QA_PROMPT,
+        get_qwen_remote_reward_model_value
+    )
 from IPython import embed
 
 
@@ -52,6 +54,7 @@ class EntropyGuidedChainLocalManager:
             "M": args["m"],
             "N": args["n"],
             "L": args["l"],
+            "T": args["t"],
             "pass_k_result": [],
             "time_use": 0,
             "tree_structures": []
@@ -92,11 +95,12 @@ class EntropyGuidedChainLocalManager:
         M = self.args["m"]
         N = self.args["n"]
         L = self.args["l"]
+        T = self.args['t']
 
         init_prompt_ids_with_template = self.encode_fn(
-            [[problem_str],[None]],1024, device="cpu",system_prompt=system_prompt
+            [[problem_str], [None]], 1024, device="cpu", system_prompt=system_prompt
         )["input_ids"][0].tolist()
-        
+
         print(init_prompt_ids_with_template)
 
         paths = self.paths
@@ -169,11 +173,7 @@ class EntropyGuidedChainLocalManager:
             # 准备推理
             m_tree_top_n_prompt_ids = []
             task_mapping = {}
-            for i, (tree_idx, node_idx, node, split_idx) in enumerate(expansion_tasks):
-                # prefix = node.get_prefix(split_idx)
-                # prompt = GLM_QA_PROMPT.format(
-                #     prompt=problem_str, response=prefix
-                # )
+            for i, (tree_idx, node_idx, node, split_idx) in enumerate(expansion_tasks * T):
                 prefix_ids = node.get_prefix_ids(split_idx)
                 prompt_ids = init_prompt_ids_with_template + prefix_ids
                 m_tree_top_n_prompt_ids.append(prompt_ids)
@@ -239,13 +239,13 @@ class EntropyGuidedChainLocalManager:
                     node.score = node.binary_score
                 else:
                     value = get_qwen_remote_reward_model_value(
-                        urls= args["entropy_rm_urls"], question = problem_str, response = node.total_str)
+                        urls=args["entropy_rm_urls"], question=problem_str, response=node.total_str)
                     if args["use_pure_RM"]:
                         a = 0.5
                         b = -2.898
                         x = a*(value-b)
                         result = 1/(1+math.exp(-x))
-                        print("entropy rm_score",value, result)
+                        print("entropy rm_score", value, result)
                         node.score = result
                     else:
                         sigmoid_value = 1 / (1 + math.exp(-value))
@@ -261,16 +261,16 @@ class EntropyGuidedChainLocalManager:
         paths['tree_structures'] = [
             self.serialize_tree_list(tree_list) for tree_list in self.tree_lists
         ]
-        root,selected_terminals = build_into_tree_format(self.tree_lists,self.decode_fn,args['num_traces'])
-        paths = gather_paths(
-            selected_terminals = selected_terminals,
-            pass_k = args['num_traces'],
-            parent_shift = True,
-            use_orm_reward = args['use_orm_reward'],
-            use_chain_reward = args["use_chain_reward"],
-            step_level_norm = args["step_level_norm"],
-            use_state_value_reward = args["use_state_value_reward"],
-        )
+        # root, selected_terminals = build_into_tree_format(self.tree_lists,self.decode_fn,args['num_traces'])
+        # paths = gather_paths(
+        #     selected_terminals = selected_terminals,
+        #     pass_k = args['num_traces'],
+        #     parent_shift = True,
+        #     use_orm_reward = args['use_orm_reward'],
+        #     use_chain_reward = args["use_chain_reward"],
+        #     step_level_norm = args["step_level_norm"],
+        #     use_state_value_reward = args["use_state_value_reward"],
+        # )
         return paths
 
     def serialize_tree_list(self, tree_list):

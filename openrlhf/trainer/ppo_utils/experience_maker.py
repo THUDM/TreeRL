@@ -3313,6 +3313,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     "top_p": kwargs.get("top_p", 0.9),
                     "m": kwargs.get("m", 8),
                     "n": kwargs.get("n", 4),
+                    # 新增参数
+                    "t": kwargs.get("t", 1),
                     "l": kwargs.get("l", 2),
                     "evaluator_urls": ["http://172.18.74.194:8000/v1"],
                     "extractor_urls": ["http://172.18.74.52:8000/v1"],

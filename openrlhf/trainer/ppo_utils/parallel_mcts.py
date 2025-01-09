@@ -29,20 +29,35 @@ import yaml
 import torch
 from typing import List
 import re
-from openrlhf.trainer.ppo_utils.evaluation import (
-# from evaluation import (
-    check_result,
-    generate_logits,
-    test_sglang_model,
-    test_glm_model,
-    get_qwen_remote_reward_model_value,
-    query_local_vllm_completions_ids,
-    QWEN_SYSTEM_PROMPT,
-    UNDERSTANDING_PROMPT,
-    QWEN_QA_PROMPT,
-    GLM_QA_PROMPT,
-    top_k_sampling,
-)
+try:
+    from openrlhf.trainer.ppo_utils.evaluation import (
+        check_result,
+        generate_logits,
+        test_sglang_model,
+        test_glm_model,
+        get_qwen_remote_reward_model_value,
+        query_local_vllm_completions_ids,
+        QWEN_SYSTEM_PROMPT,
+        UNDERSTANDING_PROMPT,
+        QWEN_QA_PROMPT,
+        GLM_QA_PROMPT,
+        top_k_sampling,
+    )
+except:
+    from evaluation import (
+    # from evaluation import (
+        check_result,
+        generate_logits,
+        test_sglang_model,
+        test_glm_model,
+        get_qwen_remote_reward_model_value,
+        query_local_vllm_completions_ids,
+        QWEN_SYSTEM_PROMPT,
+        UNDERSTANDING_PROMPT,
+        QWEN_QA_PROMPT,
+        GLM_QA_PROMPT,
+        top_k_sampling,
+    )
 
 from vllm import LLM,SamplingParams
 import os

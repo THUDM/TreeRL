@@ -1,3 +1,4 @@
+import math
 import random
 import requests
 import json
@@ -206,6 +207,7 @@ GLM_QA_PROMPT = """[gMASK]<sop><|user|>
 {prompt}<|assistant|>
 {response}"""
 
+
 def query_sglang_chat(
     prompt,
     urls,
@@ -259,10 +261,12 @@ def query_sglang_chat(
                 exit(1)
             print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
             with open("/workspace/lurui/openrlhf-glm/logs/outputs/api_error.jsonl", "a") as f:
-                f.write(json.dumps({"url": url, "error": str(e),"request_data": request_data}) + "\n")
+                f.write(json.dumps({"url": url, "error": str(
+                    e), "request_data": request_data}) + "\n")
             time.sleep(sleep_time)
 
     return None
+
 
 def extract_answer(
     question,
@@ -339,9 +343,10 @@ def check_result(
     if answer is None:
         return None, 0
     check = check_equality(answer, label, urls=checker_urls)
-    print("===",check,"===",answer,label)
+    print("===", check, "===", answer, label)
     with open("/workspace/lurui/openrlhf-glm/logs/outputs/checker_mcts.jsonl", "a") as f:
-        f.write(json.dumps({"question":question,"response":response, "extracted_answer": answer, "label": label,"check": check}) + "\n")
+        f.write(json.dumps({"question": question, "response": response,
+                "extracted_answer": answer, "label": label, "check": check}) + "\n")
     return answer, 1 if check else 0
 
 
@@ -356,7 +361,7 @@ def check_result(
 #     top_p=0.9,
 #     min_tokens = 0,
 #     model = "glm"
-# ):  
+# ):
 
 #     sampling_params = SamplingParams(
 #         temperature=temperature,
@@ -368,7 +373,7 @@ def check_result(
 #         # seed = random.randint(0, 100000),
 #         n = n,
 #     )
-    
+
 #     content_list = []
 #     finish_reason_list = []
 #     stop_token_list = []
@@ -393,7 +398,7 @@ def check_result(
 #                 exit(1)
 #             print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
 #             time.sleep(sleep_time)
-    
+
 #     return None, None, None, None, None
 
 def query_local_vllm_completions_ids(
@@ -405,21 +410,21 @@ def query_local_vllm_completions_ids(
     stops=None,
     temperature=0.9,
     top_p=0.9,
-    min_tokens = 0,
-    model = "glm"
-):  
+    min_tokens=0,
+    model="glm"
+):
 
     sampling_params = SamplingParams(
         temperature=temperature,
         top_p=top_p,
         max_tokens=max_tokens,
-        min_tokens = min_tokens,
-        skip_special_tokens = skip_special_tokens,
-        stop_token_ids = stops,
+        min_tokens=min_tokens,
+        skip_special_tokens=skip_special_tokens,
+        stop_token_ids=stops,
         # seed = random.randint(0, 100000),
-        n = n,
+        n=n,
     )
-    
+
     content_list = []
     finish_reason_list = []
     stop_token_list = []
@@ -427,28 +432,35 @@ def query_local_vllm_completions_ids(
 
     for try_counter in range(RETRY_COUNT):
         try:
-            outputs = ray.get(llm.generate.remote(sampling_params=sampling_params, prompt_token_ids=prompt_token_ids))
+            outputs = ray.get(llm.generate.remote(
+                sampling_params=sampling_params, prompt_token_ids=prompt_token_ids))
             # outputs = llm.generate(prompt_token_ids=prompt_token_ids, sampling_params=sampling_params)
             # content_token_list = torch.tensor([[outs.token_ids for outs in output.outputs] for output in outputs])
-            content_token_list = [[list(outs.token_ids) for outs in output.outputs] for output in outputs]
-            content_str_list = [[outs.text for outs in output.outputs] for output in outputs]
-            finish_reason_list = [[outs.finish_reason for outs in output.outputs] for output in outputs]
-            stop_token_list = [[outs.stop_reason for outs in output.outputs] for output in outputs]
-            token_num_list = [[len(outs.token_ids) for outs in output.outputs] for output in outputs]
+            content_token_list = [
+                [list(outs.token_ids) for outs in output.outputs] for output in outputs]
+            content_str_list = [
+                [outs.text for outs in output.outputs] for output in outputs]
+            finish_reason_list = [
+                [outs.finish_reason for outs in output.outputs] for output in outputs]
+            stop_token_list = [
+                [outs.stop_reason for outs in output.outputs] for output in outputs]
+            token_num_list = [[len(outs.token_ids)
+                               for outs in output.outputs] for output in outputs]
             # print("===stop_token===\n", stop_token_list)
             # pdb.set_trace()
             # print(content_token_list)
 
-            return content_token_list, content_str_list, finish_reason_list, stop_token_list ,token_num_list
+            return content_token_list, content_str_list, finish_reason_list, stop_token_list, token_num_list
 
         except Exception as e:
             sleep_time = 2 * try_counter + 1
             if sleep_time > 30:
                 exit(1)
             with open("/workspace/lurui/openrlhf-glm/logs/outputs/error.log", "a") as f:
-                f.write(f"Error: {str(e)}, sleeping for {sleep_time} seconds\n")
+                f.write(
+                    f"Error: {str(e)}, sleeping for {sleep_time} seconds\n")
             time.sleep(sleep_time)
-    
+
     return None, None, None, None, None
 
 
@@ -522,8 +534,10 @@ def test_sglang_model(urls):
             print(response.text)
             print("Request timed out")
             exit(1)
+
 # print(query_model_sglang("who are you?", url="http://172.19.192.138:8000/v1"))
-import math
+
+
 def generate_logits(urls, user_query, assistant_response):
     def send_request(user_query, assistant_response):
         payload = {
@@ -555,7 +569,8 @@ def generate_logits(urls, user_query, assistant_response):
                     # print(response.json())
                     return response.json()
                 else:
-                    print(f"Failed to fetch response: {response.status_code}, {response.text}, {url}")
+                    print(
+                        f"Failed to fetch response: {response.status_code}, {response.text}, {url}")
             except requests.exceptions.RequestException as e:
                 sleep_time = min(2 ** try_counter, 30)
                 print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
@@ -640,12 +655,13 @@ def get_qwen_remote_reward_model_value(urls, question, response):
     # if len(question) + len(response) > 4096:
     #     response = response[:4096 - len(question)]
 
-    conversation_str = apply_chat_template_qwen(system_prompt, question, response)
+    conversation_str = apply_chat_template_qwen(
+        system_prompt, question, response)
     # print(conversation_str)
 
     for _ in range(3):
         try:
-        # if True:
+            # if True:
             responses = client.embeddings.create(
                 input=[conversation_str],
                 model="Qwen72BRM",
@@ -661,86 +677,97 @@ def get_qwen_remote_reward_model_value(urls, question, response):
     return 0
 
 # get_qwen_remote_reward_model_value(["http://172.20.65.240:8000/v1"], "What is the value of $x$ in the equation $2x + 3 = 7$?", "The value of $x$ in the equation $2x + 3 = 7$ is $x = 2$.")
-def query_tgi_get_first_token(prompt, urls):
-        first_token_list = []
-        for i in range(16):
-            try:
-                url = random.choice(urls)
-                rep = requests.post(
-                    url,
-                    json={
-                        'inputs': prompt,
-                        'stream': False,
-                        "parameters": {
-                            "best_of": 1,
-                            "decoder_input_details": False,
-                            "details": False,
-                            "do_sample": True,
-                            "max_new_tokens": 1,
-                            "return_full_text": False,
-                            "temperature": 30,
-                            "top_k": 32,
-                            "stop": ["<|user|>", "<|endoftext|>", "<|observation|>"],
-                        }
-                    },
-                    headers={
-                        'Content-Type': 'application/json'
-                    },
-                    timeout=360
-                )
-                rep = rep.json()
-                ans = rep[0]['generated_text']
-                # # 必须包含字母
-                # if ans.strip() in ['', '<', '</'] or not any(c.isalpha() for c in ans):
-                #     continue
-                # 如果里面有中文，就跳过
-                if any('\u4e00' <= char <= '\u9fff' for char in ans):
-                    continue
-                # if isinstance(rep, list):
-                if ans:
-                    first_token_list.append(ans)
-                # else:
-                #     return rep['generated_text'].strip().replace('<|user|>', '')
-            except Exception as e:
-                print(f"Exception: ", e)
-                continue
-        # 去重
-        first_token_list = list(set(first_token_list))
-        return first_token_list
 
-def top_k_sampling(llm, prompts,stops = None,skip_special_tokens=True,top_p=0.9):
-        # _prompts = [prompt.strip() + prefix_text for prompt in prompts[0]]
-        # prompts = [_prompts, prompts[1]]
-        # prompt_token_ids = [tokenize_fn([[prompt]], 1024, device="cpu") for prompt in prompts]
-        prompt_token_ids = prompts
-        sampling_params = SamplingParams(
-            logprobs=4,
-            max_tokens=1,
-            temperature=5,
-            top_k=16,
-            min_p=0,
-            skip_special_tokens=skip_special_tokens,
-            stop_token_ids=stops,
-            top_p=top_p,
-            min_tokens=0
+
+def query_tgi_get_first_token(prompt, urls):
+    first_token_list = []
+    for i in range(16):
+        try:
+            url = random.choice(urls)
+            rep = requests.post(
+                url,
+                json={
+                    'inputs': prompt,
+                    'stream': False,
+                    "parameters": {
+                        "best_of": 1,
+                        "decoder_input_details": False,
+                        "details": False,
+                        "do_sample": True,
+                        "max_new_tokens": 1,
+                        "return_full_text": False,
+                        "temperature": 30,
+                        "top_k": 32,
+                        "stop": ["<|user|>", "<|endoftext|>", "<|observation|>"],
+                    }
+                },
+                headers={
+                    'Content-Type': 'application/json'
+                },
+                timeout=360
+            )
+            rep = rep.json()
+            ans = rep[0]['generated_text']
+            # # 必须包含字母
+            # if ans.strip() in ['', '<', '</'] or not any(c.isalpha() for c in ans):
+            #     continue
+            # 如果里面有中文，就跳过
+            if any('\u4e00' <= char <= '\u9fff' for char in ans):
+                continue
+            # if isinstance(rep, list):
+            if ans:
+                first_token_list.append(ans)
+            # else:
+            #     return rep['generated_text'].strip().replace('<|user|>', '')
+        except Exception as e:
+            print(f"Exception: ", e)
+            continue
+    # 去重
+    first_token_list = list(set(first_token_list))
+    return first_token_list
+
+
+def top_k_sampling(llm, prompts, stops=None, skip_special_tokens=True, top_p=0.9):
+    # _prompts = [prompt.strip() + prefix_text for prompt in prompts[0]]
+    # prompts = [_prompts, prompts[1]]
+    # prompt_token_ids = [tokenize_fn([[prompt]], 1024, device="cpu") for prompt in prompts]
+    prompt_token_ids = prompts
+    sampling_params = SamplingParams(
+        logprobs=4,
+        max_tokens=1,
+        temperature=5,
+        top_k=16,
+        min_p=0,
+        skip_special_tokens=skip_special_tokens,
+        stop_token_ids=stops,
+        top_p=top_p,
+        min_tokens=0
+    )
+    input_ids_with_next_token = []
+    # outputs = ray.get(vllm_engine.generate.remote(sampling_params=params, prompt_token_ids=prompt_token_ids))
+    # print(prompt_token_ids)
+    # outputs = llm.generate(prompt_token_ids = prompt_token_ids, sampling_params = sampling_params)
+    try:
+        outputs = ray.get(llm.generate.remote(
+            prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
+    except:
+        print("ray.get error")
+        outputs = llm.generate(
+            prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
         )
-        input_ids_with_next_token = []
-        # outputs = ray.get(vllm_engine.generate.remote(sampling_params=params, prompt_token_ids=prompt_token_ids))
-        # print(prompt_token_ids)
-        # outputs = llm.generate(prompt_token_ids = prompt_token_ids, sampling_params = sampling_params)
-        outputs = ray.get(llm.generate.remote(prompt_token_ids = prompt_token_ids, sampling_params = sampling_params))
-        # print(outputs)
-        first_tokens_lists = []
-        for prompt_id, output in zip(prompt_token_ids, outputs):
-            for out in output.outputs:
-                logprobs = out.logprobs[0]
-                used_logprobs = [k for k, v in logprobs.items() if v.logprob > -10]
-                if len(used_logprobs) == 0:
-                    used_logprobs = [k for k in logprobs.keys()]
-                first_tokens_lists.append(used_logprobs)
-        return first_tokens_lists
+    # print(outputs)
+    first_tokens_lists = []
+    for prompt_id, output in zip(prompt_token_ids, outputs):
+        for out in output.outputs:
+            logprobs = out.logprobs[0]
+            used_logprobs = [k for k, v in logprobs.items() if v.logprob > -10]
+            if len(used_logprobs) == 0:
+                used_logprobs = [k for k in logprobs.keys()]
+            first_tokens_lists.append(used_logprobs)
+    return first_tokens_lists
 # input_ids_with_next_token = top_k_sampling(llm, ["What is 1+1?", "What is 2+2?"])
 # print(input_ids_with_next_token)
+
 
 def query_local_vllm_completions_with_logprobs(
     prompts,
@@ -803,6 +830,7 @@ def query_local_vllm_completions_with_logprobs(
             time.sleep(sleep_time)
     return None, None, None, None, None
 
+
 def query_local_vllm_ids_with_logprobs(
     prompt_token_ids,
     llm,
@@ -833,11 +861,14 @@ def query_local_vllm_ids_with_logprobs(
 
     for try_counter in range(RETRY_COUNT):
         try:
-            # outputs = llm.generate(
-            #     prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
-            # )
-            outputs = ray.get(llm.generate.remote(
-                prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
+            try:
+                outputs = ray.get(llm.generate.remote(
+                    prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
+            except:
+                # print("ray.get error")
+                outputs = llm.generate(
+                    prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
+                )
 
             for output in outputs:
                 assert len(output.outputs) == 1
