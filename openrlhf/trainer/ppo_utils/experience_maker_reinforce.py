@@ -209,6 +209,7 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
             experiences = self.sample_responses(
                 prompts,
                 getattr(self.strategy.args, "num_trace_per_sample", 1), 
+                file_name = "/workspace/lurui/openrlhf-glm/logs/samplings/"+str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl",
                 **generate_kwargs
             )
         action_mask = experiences["action_mask"]

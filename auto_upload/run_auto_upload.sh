@@ -7,7 +7,7 @@
 # EVAL_DIR=/workspace/lurui/rm_simple_evals/RL_auto_results
 EVAL_DIR=/workspace/lurui/rm_simple_evals/RL_auto_results
 # example 
-TUNED_MODEL_NAME=ms32-entropy-tree-advantage-value-orm-8-4-2-lr15e-6
+TUNED_MODEL_NAME=qwen-ms32-chain-binary
 # TUNED_MODEL_NAME=ms32-entropy-tree-advantage-value-binary-8-4-2
 # TUNED_MODEL_NAME=ms32-multi-chain-orm
 # TUNED_MODEL_NAME=ms32-entropy-tree-advantage-value-orm
@@ -16,5 +16,5 @@ TUNED_MODEL_NAME=ms32-entropy-tree-advantage-value-orm-8-4-2-lr15e-6
 
 python auto_upload.py \
     --base_path $EVAL_DIR/$TUNED_MODEL_NAME \
-    --project_name openrlhf_code_rl \
+    --project_name openrlhf_math_mcts \
     --run_name $TUNED_MODEL_NAME-eval \

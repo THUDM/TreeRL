@@ -320,8 +320,8 @@ if __name__ == "__main__":
     parser.add_argument("--m", type=int, default=8)
     parser.add_argument("--n", type=int, default=4)
     parser.add_argument("--l", type=int, default=2)
-
+    parser.add_argument("--t", type=int, default=2)
     
-    
+ 
     args = parser.parse_args()
     train(args)

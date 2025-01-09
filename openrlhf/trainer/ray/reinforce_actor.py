@@ -358,6 +358,7 @@ class ActorModelRayActor(BasePPORole):
             m = args.m,
             n = args.n,
             l = args.l,
+            t = args.t,
             system_prompt = args.system_prompt,
         )
 

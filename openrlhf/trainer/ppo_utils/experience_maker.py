@@ -1731,7 +1731,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             "rollout_time": rollout_time,
         }
 
-    def sample_responses(self, prompts: List[str], num_trace_per_sample: int = 1, **generate_kwargs):
+    def sample_responses(self, prompts: List[str], num_trace_per_sample: int = 1,file_name = "test.jsonl", **generate_kwargs):
             
         device = torch.cuda.current_device()
 
@@ -1875,9 +1875,17 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                         if "glm" in self.current_model.lower():
                             question, answer = extract_qa_for_glm(item)
                             queries[i] = (question, answer)
+                            new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
+                            os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            with open(file_name, "a") as f:
+                                f.write(json.dumps(new_data) + "\n")
                         else:
                             question, answer = extract_qa_for_qwen(item)
                             queries[i] = (question, answer)
+                            new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
+                            os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            with open(file_name, "a") as f:
+                                f.write(json.dumps(new_data) + "\n")
                             with open("/workspace/lurui/openrlhf-glm/logs/outputs/queries.jsonl", "a") as f:
                                 f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"multi-chain"}) + "\n")
                             # raise NotImplementedError
@@ -2123,14 +2131,19 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     # div_std=div_std   
                 )   
                 
-        # if self.strategy.args.mask_repeated_samples:
-        #     r = r * repeated_mask
         if self.strategy.args.mask_repeated_samples:
-            # r = r * repeated_mask
-            # 找出 r 的最小值
+            # mask 掉重复的样本
             r_min = r.min().item()
             print("repeated_mask",repeated_mask.shape,"r",r.shape)
             r[repeated_mask == 0] = r_min - 1
+            # mask 掉 entropy 过大的样本
+            # response_entropy = -(action_log_probs * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
+            # print("response_entropy and action_log_probs",response_entropy.shape,action_log_probs.shape,response_entropy)
+            # entropy_mask_threshold = generate_kwargs.get("entropy_mask_threshold", 1)
+            # print("entropy_mask_threshold",entropy_mask_threshold)
+            # r[response_entropy > entropy_mask_threshold] = r_min - 1
+            
+            
 
         if self.remote_reward_url:
             assert batch_first, f"batch_first must be set to True: {batch_first}"
@@ -2297,20 +2310,20 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                         if "glm" in self.current_model.lower():
                             question, answer = extract_qa_for_glm(item)
                             queries[i] = (question, answer)
-                            # new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
-                            # os.makedirs(os.path.dirname(file_name), exist_ok=True)
-                            # with open(file_name, "a") as f:
-                            #     f.write(json.dumps(new_data) + "\n")
+                            new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
+                            os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            with open(file_name, "a") as f:
+                                f.write(json.dumps(new_data) + "\n")
                             with open("/workspace/lurui/openrlhf-glm/logs/outputs/queries.jsonl", "a") as f:
                                 f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"tree"}) + "\n")
                             # print(question,answer)
                         else:
                             question, answer = extract_qa_for_qwen(item)
                             queries[i] = (question, answer)
-                            # new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
-                            # os.makedirs(os.path.dirname(file_name), exist_ok=True)
-                            # with open(file_name, "a") as f:
-                            #     f.write(json.dumps(new_data) + "\n")
+                            new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
+                            os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            with open(file_name, "a") as f:
+                                f.write(json.dumps(new_data) + "\n")
                             with open("/workspace/lurui/openrlhf-glm/logs/outputs/queries.jsonl", "a") as f:
                                 f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"tree"}) + "\n")
                             # raise NotImplementedError
@@ -2516,6 +2529,11 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             r_min = r.min().item()
             print("repeated_mask",repeated_mask.shape,"r",r.shape)
             r[repeated_mask == 0] = r_min - 1
+            # response_entropy = -(action_log_probs * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
+            # print("response_entropy and action_log_probs",response_entropy.shape,action_log_probs.shape,response_entropy)
+            # entropy_mask_threshold = generate_kwargs.get("entropy_mask_threshold", 1)
+            # print("entropy_mask_threshold",entropy_mask_threshold)
+            # r[response_entropy > entropy_mask_threshold] = r_min - 1
 
 
         if self.remote_reward_url:
@@ -3317,7 +3335,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     "t": kwargs.get("t", 1),
                     "l": kwargs.get("l", 2),
                     "evaluator_urls": ["http://172.18.74.194:8000/v1"],
-                    "extractor_urls": ["http://172.18.74.52:8000/v1"],
+                    "extractor_urls": ["http://172.18.75.153:8000/v1"],
                     "entropy_rm_urls": ["http://172.18.73.102:8000/v1"],
                     "eos_tokens": ["<|user|>", "<|endoftext|>", "<|observation|>"],
                     "num_traces": num_trace_per_sample,
@@ -3335,8 +3353,9 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     "m": kwargs.get("m", 8),
                     "n": kwargs.get("n", 4),
                     "l": kwargs.get("l", 2),
+                    "t": kwargs.get("t", 1),
                     "evaluator_urls": ["http://172.18.74.194:8000/v1"],
-                    "extractor_urls": ["http://172.18.74.52:8000/v1"],
+                    "extractor_urls": ["http://172.18.75.153:8000/v1"],
                     "entropy_rm_urls": ["http://172.18.73.102:8000/v1"],
                     "eos_tokens": ["<|im_end|>"],
                     "num_traces": num_trace_per_sample,
