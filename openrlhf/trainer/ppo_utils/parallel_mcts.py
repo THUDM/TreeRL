@@ -14,7 +14,7 @@ I haven't tried it yet.
 
 """
 
-from typing import Optional,Callable 
+from typing import Optional,Callable, Dict, Any, List
 import random
 import math
 from collections import deque
@@ -473,7 +473,6 @@ class MCTSr(BaseModel):
                 
         return selected_indices
 
-
     def select_node(self, k=1,random_pick=False):
         """Select up to k non-fully expanded nodes with the highest UCT value.
 
@@ -504,12 +503,14 @@ class MCTSr(BaseModel):
         else:
             if self.selection_policy == SelectionPolicy.GREEDY:
                 selected_nodes = sorted(candidates, key=self.uct, reverse=True)[:k]
+
             elif self.selection_policy == SelectionPolicy.IMPORTANCE_SAMPLING:
                 uct_scores = [self.uct(node) for node in candidates]
                 # 拷贝一份candidates，避免修改原列表
                 candis = candidates.copy()
                 selected_indices = self.weighted_sample_no_replacement(candis, uct_scores, k)
                 selected_nodes = [candidates[i] for i in selected_indices]
+
             elif self.selection_policy == SelectionPolicy.PAIRWISE_IMPORTANCE_SAMPLING:
                 uct_scores = [self.uct(node) for node in candidates]
                 pairs = [
@@ -523,6 +524,7 @@ class MCTSr(BaseModel):
                 selected_pair_indices = random.choices(
                     range(len(pairs)), weights=pair_weights, k=min(k, len(pair_weights))
                 )
+
                 for pair_idx in selected_pair_indices:
                     selected_candidate_idx = max(
                         pairs[pair_idx], key=lambda x: uct_scores[x]
@@ -574,7 +576,7 @@ class MCTSr(BaseModel):
         start_time = time.time()
 
         while node_number < self.max_nodes and time.time() - start_time < self.max_time_use:
-            nodes = self.select_node(k=self.concurrent_num,random_pick=self.random_pick)
+            nodes = self.select_node(k=self.concurrent_num, random_pick=self.random_pick)
             if not nodes:
                 print("terminated because no node to expand")
                 break
@@ -687,7 +689,7 @@ class MCTSr(BaseModel):
                 temperature=self.temperature,
                 top_p=self.top_p,
                 model="glm",
-                min_tokens = token_threshold
+                min_tokens=token_threshold
             )
             # print("stop_tokens", stop_tokens)
 
@@ -1409,8 +1411,8 @@ def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dic
     if parent_shift:
         path = []
         while node.parent is not None:
-            parent_value = node.parent.accumulated_value/node.parent.terminal_in_subtree
-            child_value = node.accumulated_value/node.terminal_in_subtree
+            parent_value = node.parent.accumulated_value / node.parent.terminal_in_subtree
+            child_value = node.accumulated_value / node.terminal_in_subtree
             if node.terminal:
                 assert node.terminal_in_subtree == 1, "terminal_in_subtree is not 1"
             # print("pass_ratio",parent_value,child_value)
@@ -1421,10 +1423,17 @@ def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dic
     else:
         path = []
         while node is not None:
-            print("pass_ratio",node.correct_terminal_in_subtree,node.terminal_in_subtree,node.accumulated_value)
-            path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":node.accumulated_value})
+            print("pass_ratio", node.correct_terminal_in_subtree, node.terminal_in_subtree, node.accumulated_value)
+            path.append({
+                'answer': node.answer, 
+                'token_answer': node.answer_token,
+                'reward': node.value, 
+                "pass_ratio": node.correct_terminal_in_subtree / node.terminal_in_subtree,
+                "value": node.accumulated_value
+            })
             node = node.parent
         return path[::-1][1:]
+
 
 def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False) -> List[List[Dict[str, Any]]]:
     paths = []
@@ -1453,6 +1462,7 @@ def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bo
             for node in path:
                 node["value"] = (node["value"] + node["state_value"])/2
     return paths
+
 
 # 封装为一个函数,输入为item,输出为paths
 def parallel_mcts(item, llm, tokenize_fn, detokenize_fn, args):

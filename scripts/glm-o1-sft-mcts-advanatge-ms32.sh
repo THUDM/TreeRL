@@ -91,10 +91,11 @@ ray job submit --address="http://127.0.0.1:8265" \
     --process_supervision \
     --mask_repeated_samples \
     --max_nodes 512 \
-    --max_node_per_depth 32\
+    --max_node_per_depth 32 \
     --max_time_use 480 \
     --random_pick \
     --parent_shift \
+    
     # --use_general_reward_for_stem \
     # --use_rule_based_reward \
     # --mask_repeated_samples \

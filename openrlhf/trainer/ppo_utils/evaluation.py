@@ -427,7 +427,7 @@ def query_local_vllm_completions_ids(
             # pdb.set_trace()
             # print(content_token_list)
 
-            return content_token_list, content_str_list, finish_reason_list, stop_token_list ,token_num_list
+            return content_token_list, content_str_list, finish_reason_list, stop_token_list, token_num_list
 
         except Exception as e:
             sleep_time = 2 * try_counter + 1
