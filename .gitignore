@@ -25,6 +25,10 @@ share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+data/
+log/
+run_scripts/
+scripts/
 MANIFEST
 
 # PyInstaller
@@ -159,3 +163,8 @@ checkpoints/*
 reward/*
 datasets/*
 logs/*
+
+auto_upload/*
+auto_eval/*
+openrlhf/trainer/ppo_utils/configs
+scripts_local

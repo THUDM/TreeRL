@@ -37,6 +37,7 @@ import os
 import time
 
 from openrlhf.trainer.ppo_utils.parallel_mcts import parallel_mcts
+from openrlhf.trainer.ppo_utils.entropy_guided_tree_search import parallel_entropy_guided_tree
 
 logger = init_logger(__name__)
 
@@ -443,9 +444,10 @@ def _tokenize_fn_chatglm(tokenizer, prompt, history, max_length):
     return sample_input_ids
 
 
-def _tokenize_fn_llama(tokenizer, prompt, history, max_length):
+def _tokenize_fn_llama(tokenizer, prompt, history, max_length,system_prompt=None):
     conversation = []
-
+    if system_prompt:
+        conversation.append({"role": "system", "content": system_prompt})
     if history:
         for x in history:
             conversation.append({"role": "user", "content": x["prompt"]})
@@ -453,15 +455,19 @@ def _tokenize_fn_llama(tokenizer, prompt, history, max_length):
     conversation.append({"role": "user", "content": prompt})
     sample_input_ids = tokenizer.apply_chat_template(conversation)
     sample_input_ids = sample_input_ids[-max_length:] + tokenizer.encode("<|im_start|>assistant\n")
+    # 把sample_input_ids decode成文本
+    # with open("/workspace/lurui/openrlhf-glm/logs/outputs/sample_input_ids.jsonl", "a") as f:
+    #     str_input_ids = tokenizer.decode(sample_input_ids)
+    #     f.write(json.dumps({"sequences":str_input_ids,"system_prompt":system_prompt}) + "\n")
     return sample_input_ids
 
 
-def tokenize_fn_llama(tokenizer, texts, max_length, device):
-    batch = [_tokenize_fn_llama(tokenizer, prompt=_prompt, history=_history, max_length=max_length) for _prompt, _history in zip(*texts)]
+def tokenize_fn_llama(tokenizer, texts, max_length, device,system_prompt=None):
+    batch = [_tokenize_fn_llama(tokenizer, prompt=_prompt, history=_history, max_length=max_length,system_prompt=system_prompt) for _prompt, _history in zip(*texts)]
 
     batch_length = max([len(x) for x in batch])
     pad_token_id = tokenizer.pad_token_id
-    max_length = max(max_length, batch_length)
+    max_length = min(max_length, batch_length)
 
     def batch_encode_plus(input_ids):
         sample_len = len(input_ids)
@@ -475,7 +481,15 @@ def tokenize_fn_llama(tokenizer, texts, max_length, device):
 
         return {"input_ids": input_ids, "attention_mask": attention_mask}
     
-    batch = [batch_encode_plus(x) for x in batch]
+    # batch = [batch_encode_plus(x) for x in batch]
+    try:
+        batch = tokenizer.batch_encode_plus(batch, return_tensors="pt", is_split_into_words=True, padding=True)
+    except:
+        batch = [batch_encode_plus(x) for x in batch]
+        batch = {
+            "input_ids": torch.stack([x["input_ids"] for x in batch]),
+            "attention_mask": torch.stack([x["attention_mask"] for x in batch]),
+        }
     return {k: v.to(device) for k, v in batch.items()}
 
 
@@ -503,8 +517,10 @@ def tokenize_fn_chatglm(tokenizer, texts, max_length, device):
         attention_mask = torch.tensor(attention_mask)
         return {"input_ids": input_ids, "attention_mask": attention_mask}
     try:
+        print("in tokenize try")
         batch = tokenizer.batch_encode_plus(batch, return_tensors="pt", is_split_into_words=True, padding=True)
     except:
+        print("in tokenize except")
         batch = [batch_encode_plus(x) for x in batch]
         batch = {
             "input_ids": torch.stack([x["input_ids"] for x in batch]),
@@ -536,6 +552,19 @@ def extract_qa_for_glm(query):
         
     return question, answer
 
+def extract_qa_for_qwen(query):
+    # 这里的query形如<|im_start|>system\nPlease reason step by step, and put your final answer within \\boxed{}.<|im_end|>\n<|im_start|>user\nProve: If the sum of all positive divisors of $ n \\in \\mathbb{Z}^{\\plus{}}$ is a power of two, then the number/amount of the divisors is a power of two.<|im_end|>\n<|im_start|>assistant\n...
+    query = query.replace("<|endoftext|>", "").strip()
+    _query = query
+    if "<|im_start|>assistant\n" not in query:
+        return "Bad Question", "*"
+    if query.strip().endswith("<|im_end|>"):
+        query = query[:-10]
+    query = query.split("<|im_end|>\n<|im_start|>assistant\n")
+    question = query[-2].strip()
+    answer = query[-1].strip()
+    question = question.split("<|im_start|>user\n")[-1].strip()
+    return question, answer
 
 def load_reward_url(file):
     data = open(file).readlines()
@@ -643,14 +672,16 @@ class NaiveExperienceMaker(ABC):
         self.reward_fn = reward_fn
         self.tokenizer_reward = tokenizer_reward
         self.remote_reward_url = remote_reward_url
-        self.current_model = "chatglm" if "glm" in self.strategy.args.pretrain else ""
+        # self.current_model = "chatglm" if "glm" in self.strategy.args.pretrain else "qwen"
+        self.current_model = self.strategy.args.pretrain
 
     # tokenizer
-    def tokenize_fn(self, texts, max_length, device):
-        if "glm" in self.current_model:
+    def tokenize_fn(self, texts, max_length, device,system_prompt=None):
+        print("current model",self.current_model)
+        if "glm" in self.current_model.lower():
             return tokenize_fn_chatglm(self.tokenizer, texts, max_length, device)
         if "qwen" or "llama" in self.current_model.lower():
-            return tokenize_fn_llama(self.tokenizer, texts, max_length, device)
+            return tokenize_fn_llama(self.tokenizer, texts, max_length, device,system_prompt=system_prompt)
 
         batch = self.tokenizer(
             texts,
@@ -730,7 +761,7 @@ class NaiveExperienceMaker(ABC):
         )
     
     def _generate_local(self, prompts: List[str], **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
             eos_token_set = (self.tokenizer.convert_tokens_to_ids("<|user|>"), self.tokenizer.convert_tokens_to_ids("<|observation|>"), self.tokenizer.eos_token_id)
         else:
@@ -857,11 +888,13 @@ class NaiveExperienceMaker(ABC):
                     queries = self.tokenizer.batch_decode(sequences.cpu(), skip_special_tokens=False)
                     
                     for i, item in enumerate(queries):
-                        if "glm" in self.current_model:
+                        if "glm" in self.current_model.lower():
                             question, answer = extract_qa_for_glm(item)
                             queries[i] = (question, answer)
                         else:
-                            raise NotImplementedError
+                            question, answer = extract_qa_for_qwen(item)
+                            queries[i] = (question, answer)
+                            # raise NotImplementedError
                     r_refs.append((queries, micro_labels))
                     # for rm in self.remote_reward_url:
                     #     _remote_rm_urls = load_reward_url(rm)
@@ -1061,14 +1094,16 @@ class NaiveExperienceMaker(ABC):
             advantages_reversed.append(lastgaelam)
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
         returns = advantages + values
-        if sequences is not None:
-            with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
-                match_list = []
-                num_actions = action_mask.size(1)
-                for i in range(advantages[0].shape[0]):
-                    str_seq = self.tokenizer.decode([sequences[0][-num_actions+i].to("cpu").tolist()], skip_special_tokens=True)
-                    match_list.append({"advantage":advantages[0][i].item(),"reward":rewards[0][i].item(),"values":values[0][i].item(),"content":str_seq})
-                f.write(json.dumps(match_list) + "\n")
+
+        # if sequences is not None:
+        #     with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
+        #         match_list = []
+        #         num_actions = action_mask.size(1)
+        #         for i in range(advantages[0].shape[0]):
+        #             str_seq = self.tokenizer.decode([sequences[0][-num_actions+i].to("cpu").tolist()], skip_special_tokens=True)
+        #             match_list.append({"advantage":advantages[0][i].item(),"reward":rewards[0][i].item(),"values":values[0][i].item(),"content":str_seq})
+        #         f.write(json.dumps(match_list) + "\n")
+
         # with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
         #     f.write(json.dumps({"advantage":advantages.tolist(),"reward":rewards.tolist(),"values":values.tolist()}) + "\n")
         return advantages.detach(), returns
@@ -1079,7 +1114,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         super().__init__(*args, **kwargs)
         self.vllm_engines = vllm_engines
         self.process_flag_tokens = get_process_flag_tokens(self.tokenizer)
-        self.current_model = "chatglm" if "glm" in self.strategy.args.pretrain else ""
+        # self.current_model = "chatglm" if "glm" in self.strategy.args.pretrain else ""
+        self.current_model = self.strategy.args.pretrain
 
     def to_train(self):
         self.actor.train()
@@ -1697,13 +1733,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             "rollout_time": rollout_time,
         }
 
-    def sample_responses(self, prompts: List[str], num_trace_per_sample: int = 1, **generate_kwargs):
-        if self.strategy.args.process_supervision:
-            return self.sample_responses_prm(prompts, num_trace_per_sample, **generate_kwargs)
-        
-        # print("prompts: ", prompts)
-        # with open("/workspace/lurui/test/prompts.json", "a") as f:
-        #     f.write(json.dumps(prompts) + "\n")
+    def sample_responses(self, prompts: List[str], num_trace_per_sample: int = 1,file_name = "test.jsonl", **generate_kwargs):
             
         device = torch.cuda.current_device()
 
@@ -1731,7 +1761,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             micro_batch_size_roll_out = batch_size = len(prompts[0])
         else:
             micro_batch_size_roll_out = batch_size = len(prompts)
-
+        print("prompt: ", prompts)
         prompts = [json.loads(x) for x in prompts]
         forward_batch_size = getattr(self.strategy.args, "inference_batch_size", 4)
         
@@ -1844,11 +1874,25 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     queries = self.tokenizer.batch_decode(micro_sequences.cpu(), skip_special_tokens=False)
                     
                     for i, item in enumerate(queries):
-                        if "glm" in self.current_model:
+                        if "glm" in self.current_model.lower():
                             question, answer = extract_qa_for_glm(item)
                             queries[i] = (question, answer)
+                            new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
+                            os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            with open(file_name, "a") as f:
+                                f.write(json.dumps(new_data) + "\n")
                         else:
-                            raise NotImplementedError
+                            question, answer = extract_qa_for_qwen(item)
+                            queries[i] = (question, answer)
+                            new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
+
+                            # os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            # with open(file_name, "a") as f:
+                            #     f.write(json.dumps(new_data) + "\n")
+                            # with open("logs/outputs/queries.jsonl", "a") as f:
+                            #     f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"multi-chain"}) + "\n")
+
+                            # raise NotImplementedError
                     assert len(queries) == len(micro_labels), f"query={len(queries)}, labels={len(labels)}"
                     # r_refs.append((queries, micro_labels))
                     r_refs_remote.append((queries, micro_labels))
@@ -2091,14 +2135,19 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     # div_std=div_std   
                 )   
                 
-        # if self.strategy.args.mask_repeated_samples:
-        #     r = r * repeated_mask
         if self.strategy.args.mask_repeated_samples:
-            # r = r * repeated_mask
-            # 找出 r 的最小值
+            # mask 掉重复的样本
             r_min = r.min().item()
             print("repeated_mask",repeated_mask.shape,"r",r.shape)
             r[repeated_mask == 0] = r_min - 1
+            # mask 掉 entropy 过大的样本
+            # response_entropy = -(action_log_probs * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
+            # print("response_entropy and action_log_probs",response_entropy.shape,action_log_probs.shape,response_entropy)
+            # entropy_mask_threshold = generate_kwargs.get("entropy_mask_threshold", 1)
+            # print("entropy_mask_threshold",entropy_mask_threshold)
+            # r[response_entropy > entropy_mask_threshold] = r_min - 1
+            
+            
 
         if self.remote_reward_url:
             assert batch_first, f"batch_first must be set to True: {batch_first}"
@@ -2262,16 +2311,26 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     queries = self.tokenizer.batch_decode(micro_sequences.cpu(), skip_special_tokens=False)
                     
                     for i, item in enumerate(queries):
-                        if "glm" in self.current_model:
+                        if "glm" in self.current_model.lower():
                             question, answer = extract_qa_for_glm(item)
                             queries[i] = (question, answer)
                             new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
                             os.makedirs(os.path.dirname(file_name), exist_ok=True)
                             with open(file_name, "a") as f:
                                 f.write(json.dumps(new_data) + "\n")
+                            # with open("/workspace/lurui/openrlhf-glm/logs/outputs/queries.jsonl", "a") as f:
+                            #     f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"tree"}) + "\n")
                             # print(question,answer)
                         else:
-                            raise NotImplementedError
+                            question, answer = extract_qa_for_qwen(item)
+                            queries[i] = (question, answer)
+                            new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
+                            os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            with open(file_name, "a") as f:
+                                f.write(json.dumps(new_data) + "\n")
+                            # with open("/workspace/lurui/openrlhf-glm/logs/outputs/queries.jsonl", "a") as f:
+                            #     f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"tree"}) + "\n")
+                            # raise NotImplementedError
                     assert len(queries) == len(micro_labels), f"query={len(queries)}, labels={len(labels)}"
                     # r_refs.append((queries, micro_labels))
                     r_refs_remote.append((queries, micro_labels, micro_node_rewards, micro_action_mask))
@@ -2474,6 +2533,12 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             r_min = r.min().item()
             print("repeated_mask",repeated_mask.shape,"r",r.shape)
             r[repeated_mask == 0] = r_min - 1
+            
+            # response_entropy = -(action_log_probs * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
+            # print("response_entropy and action_log_probs",response_entropy.shape,action_log_probs.shape,response_entropy)
+            # entropy_mask_threshold = generate_kwargs.get("entropy_mask_threshold", 1)
+            # print("entropy_mask_threshold",entropy_mask_threshold)
+            # r[response_entropy > entropy_mask_threshold] = r_min - 1
 
 
         if self.remote_reward_url:
@@ -2490,7 +2555,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 r = r * pass_rate_mask
         else:
             pass_rate = torch.zeros(action_log_probs.shape[0], device=device)
-
+        print("_raw_reward",_raw_reward.shape,_raw_reward[0])
         return {
             "action_mask": action_mask,
             "attention_mask": attention_mask,
@@ -2629,7 +2694,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     queries = self.tokenizer.batch_decode(micro_sequences.cpu(), skip_special_tokens=False)
                     
                     for i, item in enumerate(queries):
-                        if "glm" in self.current_model:
+                        if "glm" in self.current_model.lower():
                             question, answer = extract_qa_for_glm(item)
                             queries[i] = (question, answer)
                             new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
@@ -3048,19 +3113,20 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         return experience
 
     def _generate_local(self, prompts: List[str], **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
             eos_token_set = (self.tokenizer.convert_tokens_to_ids("<|user|>"), self.tokenizer.convert_tokens_to_ids("<|observation|>"), self.tokenizer.eos_token_id)
         else:
             # assert False, "Not supported model except for ChatGLM."
             eos_token_id = self.tokenizer.eos_token_id
             eos_token_set = (self.tokenizer.eos_token_id)
-        inputs = self.tokenize_fn(prompts, self.prompt_max_len)
+        system_prompt = kwargs.get("system_prompt",None)
+        inputs = self.tokenize_fn(prompts, self.prompt_max_len,system_prompt=system_prompt)
         
         kwargs["eos_token_id"] = eos_token_id
         kwargs["pad_token_id"] = self.tokenizer.pad_token_id
         
-        inputs = self.tokenize_fn(prompts, self.prompt_max_len, device="cuda")
+        inputs = self.tokenize_fn(prompts, self.prompt_max_len, device="cuda",system_prompt=system_prompt)
         return self.actor.generate(**inputs, **kwargs)
     
     
@@ -3116,13 +3182,14 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         rank = torch.distributed.get_rank()
         llm = self.vllm_engines[rank % len(self.vllm_engines)]
 
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
             eos_token_set = (self.tokenizer.convert_tokens_to_ids("<|user|>"), self.tokenizer.convert_tokens_to_ids("<|observation|>"), self.tokenizer.eos_token_id)
         else:
             # assert False, "Not supported model except for ChatGLM."
             eos_token_id = self.tokenizer.eos_token_id
-            eos_token_set = (self.tokenizer.eos_token_id)
+            # eos_token_set = (self.tokenizer.eos_token_id,self.tokenizer.convert_tokens_to_ids("<|im_end|>"))
+            eos_token_set = [self.tokenizer.eos_token_id]
 
         sampling_params = SamplingParams(
             temperature=kwargs.get("temperature", 1.0),
@@ -3135,10 +3202,12 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             # min_p=self.strategy.args.min_p,
             # stop=["<|user|>", "<|observation|>"],
         )
-        print("max_tokens",kwargs.get("max_new_tokens", 4096))
+        print("sampling_params",sampling_params)
 
         # TODO: can't pass `max_length` to vLLM's tokenizer for input truncation, remove this once it is supported.
-        input_ids = self.tokenize_fn(prompts, self.prompt_max_len, device="cpu")["input_ids"]
+        system_prompt = kwargs.get("system_prompt",None)
+        input_ids = self.tokenize_fn(prompts, self.prompt_max_len, device="cpu",system_prompt=system_prompt)["input_ids"]
+        print("input_ids",input_ids.shape)
 
         if self.strategy.args.use_random_top_k_logits_sampling:
             prompt_token_ids = self.top_k_sampling(llm, prompts, sampling_params)
@@ -3148,6 +3217,9 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             prompt_token_ids = []
             for i, pad_index in enumerate(pad_indices.numpy()):
                 prompt_token_ids.append(input_ids[i][pad_index:].tolist())
+        
+        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/prompt_token_ids.jsonl","a") as f:
+        #     f.write(json.dumps({"sampling_params":sampling_params,"prompt_token_ids":prompt_token_ids}) + "\n")
 
         if not getattr(self.strategy.args, "random_temperature", False):
             outputs = ray.get(llm.generate.remote(sampling_params=sampling_params, prompt_token_ids=prompt_token_ids))
@@ -3241,61 +3313,98 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         rank = torch.distributed.get_rank()
         llm = self.vllm_engines[rank % len(self.vllm_engines)]
 
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
             eos_token_set = (self.tokenizer.convert_tokens_to_ids("<|user|>"), self.tokenizer.convert_tokens_to_ids("<|observation|>"), self.tokenizer.eos_token_id)
         else:
             # assert False, "Not supported model except for ChatGLM."
             eos_token_id = self.tokenizer.eos_token_id
-            eos_token_set = (self.tokenizer.eos_token_id)
+            eos_token_set = [self.tokenizer.eos_token_id]
 
         item = {"problem": prompts[0], "golden_answer": prompts[2]}
         assert prompts[2] is not None, f"labels is None, prompts: {prompts}"
-
-        # args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 512, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 32, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024}
-        args = {
-            "temperature": kwargs.get("temperature", 1.0), 
-            "top_p": kwargs.get("top_p", 1.0), 
-            "max_depth": 40, 
-            "max_nodes": kwargs.get("max_nodes", 256), 
-            "max_children": 4, 
-            "exploration_constant": 0.5, 
-            "prompt_key": "problem", 
-            "answer_key": "golden_answer", 
-            "backbone": "glm", 
-            "pass_k": num_trace_per_sample, 
-            "backprop": 0, 
-            "max_node_per_depth": kwargs.get("max_node_per_depth", 18), 
-            "first_token_temperature": 0, 
-            "look_ahead": 0, 
-            "concurrent_num": 4, 
-            "path_num": num_trace_per_sample,
-            "prompt_max_len": 1024,
-            "max_token_num": kwargs.get("max_new_tokens", 4096),
-            "max_time_use": kwargs.get("max_time_use", 360),
-            "step_level_norm": kwargs.get("step_level_norm", False),
-            "random_pick": kwargs.get("random_pick", True),
-            "parent_shift": kwargs.get("parent_shift", True),
-            "use_orm_reward": kwargs.get("use_orm_reward", False),
-            "select_correct_leaf": kwargs.get("select_correct_leaf", False),
-            "use_chain_reward": kwargs.get("use_chain_reward", False),
-            "use_state_value_reward": kwargs.get("use_state_value_reward",False),
-            "use_pure_RM": kwargs.get("use_pure_RM", False)
-        }
-        print("mcts args:",args)
         
-        def decode_fn(ids):
-            return self.tokenizer.decode(ids,skip_special_tokens=False)
+        use_entropy_tree = kwargs.get("use_entropy_tree", False)
+        
+        judge_url = self.strategy.args.binary_judge_url
+        extractor_url = self.strategy.args.extractor_url
+        entropy_rm_url = self.strategy.args.reward_model_url
+        
+        if use_entropy_tree:
+            def decode_fn(ids):
+                return self.tokenizer.decode(ids,skip_special_tokens=False)
+            print("use entropy tree")
+            if "glm" in self.current_model.lower():
+                args = {
+                    "temperature": kwargs.get("temperature", 1.2),
+                    "top_p": kwargs.get("top_p", 0.9),
+                    "m": kwargs.get("m", 8),
+                    "n": kwargs.get("n", 4),
+                    # 新增参数
+                    "t": kwargs.get("t", 1),
+                    "l": kwargs.get("l", 2),
+                    "evaluator_urls": [judge_url],
+                    "extractor_urls": [extractor_url],
+                    "entropy_rm_urls": [entropy_rm_url],
+                    "eos_tokens": ["<|user|>", "<|endoftext|>", "<|observation|>"],
+                    "num_traces": num_trace_per_sample,
+                    "use_pure_binary" :kwargs.get("use_pure_binary", False),
+                    "use_pure_RM" : kwargs.get("use_pure_RM", False),
+                    "use_orm_reward" : kwargs.get("use_orm_reward", False),
+                    "use_chain_reward" : kwargs.get("use_chain_reward", False),
+                    "step_level_norm" : kwargs.get("step_level_norm", False),
+                    "use_state_value_reward" : kwargs.get("use_state_value_reward", False),
+                }
+            else:
+                args = {
+                    "temperature": kwargs.get("temperature", 1.2),
+                    "top_p": kwargs.get("top_p", 0.9),
+                    "m": kwargs.get("m", 8),
+                    "n": kwargs.get("n", 4),
+                    "l": kwargs.get("l", 2),
+                    "t": kwargs.get("t", 1),
+                    "evaluator_urls": [judge_url],
+                    "extractor_urls": [extractor_url],
+                    "entropy_rm_urls": [entropy_rm_url],
+                    "eos_tokens": ["<|im_end|>"],
+                    "num_traces": num_trace_per_sample,
+                    "use_pure_binary" :kwargs.get("use_pure_binary", False),
+                    "use_pure_RM" : kwargs.get("use_pure_RM", False),
+                    "use_orm_reward" : kwargs.get("use_orm_reward", False),
+                    "use_chain_reward" : kwargs.get("use_chain_reward", False),
+                    "step_level_norm" : kwargs.get("step_level_norm", False),
+                    "use_state_value_reward" : kwargs.get("use_state_value_reward", False),
+                }
+            print("entropy args:",args)
+            system_prompt = kwargs.get("system_prompt",None)
+            paths = parallel_entropy_guided_tree(item, llm, args, self.tokenize_fn, decode_fn,system_prompt=system_prompt)   
+            input_ids = self.tokenize_fn([[item["problem"]],[None]],1024, device="cpu",system_prompt=system_prompt)["input_ids"][0].tolist()
+            # print(input_ids)
+        else:
+            system_prompt = kwargs.get("system_prompt",None)
+            print("use mcts not entropy")
+            if "glm" in self.current_model.lower():
+                args = {
+                    "temperature": kwargs.get("temperature", 1.2), 
+                    "top_p": kwargs.get("top_p", 0.9), 
+                    "max_depth": 40, 
+                    "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "min_children": 4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"parent_shift":kwargs.get("parent_shift", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False)}
+            else:
+                args = {"temperature": kwargs.get("temperature", 1.2), "top_p": kwargs.get("top_p", 0.9), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "min_children": 4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "qwen", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"parent_shift":kwargs.get("parent_shift", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False)}
+            print("mcts args:",args)
+            
+            def decode_fn(ids):
+                return self.tokenizer.decode(ids,skip_special_tokens=False)
 
-        paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, decode_fn, args)
+            paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, decode_fn, args,system_prompt=system_prompt)
         assert paths is not None, f"paths is None, prompts: {prompts}"
         # print("paths:",paths)
-        with open("/workspace/lurui/openrlhf-glm/logs/outputs/treepath.jsonl", "a") as f:
-            for path in paths:
-                steps = []
-                for node in path:
-                    steps.append({"answer":node["answer"],"value":node["value"],"pass_ratio":node["pass_ratio"]})
-                f.write(json.dumps(steps) + "\n")
+        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/treepath_entropy.jsonl", "a") as f:
+        #     steps = []
+        #     for path in paths:
+        #         for node in path:
+        #             steps.append({"value":node["value"],"pass_ratio":node["pass_ratio"]})
+        #     f.write(json.dumps({"paths":steps,"use entropy tree": use_entropy_tree}) + "\n")
             
         # NOTE: concat all outputs to following format:
         #
@@ -3346,7 +3455,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             sequences, max_input_len, eos_token_id, pad_token_id
         )
         overlong_mask = torch.tensor(overlong).to("cuda") # 1 for long, 0 for short
-        print("seq_rewards",seq_rewards.shape)
+        print("seq_rewards",seq_rewards.shape,sequences.shape,attention_mask.shape,action_mask.shape,overlong_mask.shape,correct_terminal,correct_terminal_count/total_terminals)
         return sequences.to("cuda"), seq_rewards.to("cuda"), attention_mask.to("cuda"), action_mask.to("cuda"), overlong_mask,correct_terminal,correct_terminal_count/total_terminals
 
     def _generate_vllm_mcts_use_vinevalue(self, prompts: List[str], num_trace_per_sample:int, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -3357,7 +3466,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         rank = torch.distributed.get_rank()
         llm = self.vllm_engines[rank % len(self.vllm_engines)]
 
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
             eos_token_set = (self.tokenizer.convert_tokens_to_ids("<|user|>"), self.tokenizer.convert_tokens_to_ids("<|observation|>"), self.tokenizer.eos_token_id)
         else:
@@ -3442,7 +3551,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         #         match_list.append({"action_mask":action_mask[0][i].item(),"reward":seq_rewards[i].item(),"values":seq_values[0][i].item(),"content":str_seq})
         #     f.write(json.dumps(match_list) + "\n")
         overlong_mask = torch.tensor(overlong).to("cuda") # 1 for long, 0 for short
-        print("seq_rewards",seq_rewards.shape)
+        print("seq_rewards",seq_rewards.shape,sequences.shape,attention_mask.shape,action_mask.shape,overlong_mask.shape,correct_terminal,correct_terminal_count/total_terminals)
         return sequences.to("cuda"), seq_rewards.to("cuda"), seq_values.to("cuda"),attention_mask.to("cuda"), action_mask.to("cuda"), overlong_mask,correct_terminal,correct_terminal_count/total_terminals
 
     def _generate_vllm_mcts_use_vinevalue_sentence_level(self, prompts: List[str], num_trace_per_sample:int, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -3453,7 +3562,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         rank = torch.distributed.get_rank()
         llm = self.vllm_engines[rank % len(self.vllm_engines)]
 
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
             eos_token_set = (self.tokenizer.convert_tokens_to_ids("<|user|>"), self.tokenizer.convert_tokens_to_ids("<|observation|>"), self.tokenizer.eos_token_id)
         else:

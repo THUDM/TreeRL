@@ -187,23 +187,22 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
         # use_vinevalue = getattr(generate_kwargs, "use_vinevalue", 0)
         print("use_mcts", use_mcts)
         print("use_vinevalue", use_vinevalue)
-        print("file_name",str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl")
+        print("file_name", str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl")
+
         if use_mcts:
             if use_vinevalue:
-                print("use vinevalue!!")
                 experiences = self.sample_responses_bymcts_use_vinevalue(
                     prompts,
                     getattr(self.strategy.args, "num_trace_per_sample", 1), 
-                    file_name = "/workspace/lurui/openrlhf-glm/logs/samplings/"+str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl",
+                    file_name = "logs/samplings/"+str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl",
                     use_sentence_level_value = use_sentence_level_value,
                     **generate_kwargs
                 )
             else:
-                print("use mcts!!")
                 experiences = self.sample_responses_bymcts(
                     prompts,
                     getattr(self.strategy.args, "num_trace_per_sample", 1), 
-                    file_name = "/workspace/lurui/openrlhf-glm/logs/samplings/"+str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl",
+                    file_name = "logs/samplings/"+str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl",
                     **generate_kwargs
             )
         else:
@@ -211,6 +210,7 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
             experiences = self.sample_responses(
                 prompts,
                 getattr(self.strategy.args, "num_trace_per_sample", 1), 
+                file_name = "logs/samplings/"+str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl",
                 **generate_kwargs
             )
         action_mask = experiences["action_mask"]
@@ -249,9 +249,9 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
                 generate_kwargs["gamma"],
                 generate_kwargs["lambd"],
             )
-            print("advantage",advantage)
-            with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
-                f.write(json.dumps({"advantage":advantage.tolist()}) + "\n")
+            # print("advantage",advantage)
+            # with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
+            #     f.write(json.dumps({"advantage":advantage.tolist()}) + "\n")
         else:
             reward, kl = compute_reward_naive(
                 experience_reward,
@@ -272,6 +272,7 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
             print(f"----------- normalized_rewards: {experience_reward}, reward_with_kl: {reward}")
         
         def reformat_reward_for_info(piece):
+            piece_origin = piece
             if len(piece.shape) == 1:
                 return piece
             elif self.strategy.args.process_supervision:
@@ -279,18 +280,19 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
                 piece = masked_mean(piece, mask, dim=-1)
             elif piece.shape[1] > 1:
                 piece = masked_mean(piece, action_mask, dim=-1)
+            print("reward to log",piece_origin, piece)
             return piece
 
         response_entropy = -(experiences["action_log_probs"] * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
-        with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
-            sequences = experiences["sequences"]
-            num_actions = action_mask.size(1)
-            for s in range(sequences.shape[0]):
-                match_list = []
-                for i in range(reward[0].shape[0]):
-                    str_seq = self.tokenizer.decode([sequences[s][-num_actions+i].to("cpu").tolist()], skip_special_tokens=True)
-                    match_list.append({"reward":reward[s][i].item(),"content":str_seq})
-                f.write(json.dumps(match_list) + "\n")
+        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
+        #     sequences = experiences["sequences"]
+        #     num_actions = action_mask.size(1)
+        #     for s in range(sequences.shape[0]):
+        #         match_list = []
+        #         for i in range(reward[0].shape[0]):
+        #             str_seq = self.tokenizer.decode([sequences[s][-num_actions+i].to("cpu").tolist()], skip_special_tokens=True)
+        #             match_list.append({"reward":reward[s][i].item(),"content":str_seq})
+        #         f.write(json.dumps(match_list) + "\n")
         
         if use_vinevalue:
             info = {

@@ -285,9 +285,10 @@ def get_stem_eval(
     use_rule_based_reward=False,
     use_general_reward_for_reason=False
 ):
-    remote_stem_urls = remote_urls["math_checker"]
+    remote_stem_urls = remote_urls["math"]
     
     extracted_answer, raw_remote_reward = check_result(remote_stem_urls, (query, response, label))
+        
     # raw_remote_rewards = raw_remote_rewards.to(torch.cuda.current_device())
     binary_reward = raw_remote_reward
     assert binary_reward in (0, 1), f"binary_reward={binary_reward}"
@@ -305,10 +306,18 @@ def get_stem_eval(
         # print(f"stem_remote_reward={_rm_based_reward}")
 
         ## 新实现：只用rm
+        import math
         remote_model_urls = remote_urls["math_RM"]
         _rm_based_reward = get_qwen_remote_reward_model_value(remote_model_urls, query, response)
-        raw_remote_reward = _rm_based_reward
+        a = 0.5
+        b = -2.898
+        x = a*(_rm_based_reward-b)
+        result = 1/(1+math.exp(-x))
+        print("use pure rm-sigmoid in chain", result)
+        raw_remote_reward = result
         # print(f"stem_remote_reward={_rm_based_reward}")
+    else:
+        print("use binary reward only")
 
     if use_rule_based_reward and not is_overlong:
         if binary_reward == 0:

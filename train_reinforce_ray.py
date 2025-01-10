@@ -298,6 +298,7 @@ if __name__ == "__main__":
     parser.add_argument("--remote_rm_url", type=str, nargs="+", default=None)
     parser.add_argument("--label_key", type=str, default=None)
     parser.add_argument("--source_key", type=str, default=None)
+    parser.add_argument("--system_prompt", type=str, default=None)
     parser.add_argument("--normalize_reward_from_multi_traces_with_rloo", action="store_true", default=False)
     parser.add_argument("--normalize_reward_mean_only", action="store_true", default=False)
     parser.add_argument("--mask_repeated_samples", action="store_true", default=False)
@@ -313,11 +314,18 @@ if __name__ == "__main__":
     parser.add_argument("--use_chain_reward", action="store_true", default=False)
     parser.add_argument("--use_state_value_reward", action="store_true", default=False)
     parser.add_argument("--use_pure_RM", action="store_true", default=False)
-
-
-
-
-
-
+    parser.add_argument("--first_token_temperature", type=float, default=0)
+    parser.add_argument("--use_pure_binary", action="store_true", default=False)
+    parser.add_argument("--use_entropy_tree", action="store_true", default=False)
+    parser.add_argument("--m", type=int, default=8)
+    parser.add_argument("--n", type=int, default=4)
+    parser.add_argument("--l", type=int, default=2)
+    parser.add_argument("--t", type=int, default=2)
+    
+    parser.add_argument("--binary_judge_url", type=str, default=None)
+    parser.add_argument("--reward_model_url", type=str, default=None)
+    parser.add_argument("--extractor_url", type=str, default=None)
+    
+ 
     args = parser.parse_args()
     train(args)

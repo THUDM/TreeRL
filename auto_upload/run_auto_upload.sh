@@ -4,12 +4,17 @@
 # export WANDB_ENTITY=glm-zero
 
 
+# EVAL_DIR=/workspace/lurui/rm_simple_evals/RL_auto_results
 EVAL_DIR=/workspace/lurui/rm_simple_evals/RL_auto_results
 # example 
-TUNED_MODEL_NAME=RLOO-glm9b-o1sft-model-ms16-kl-0-math-mcts-advantage-plus-orm-closesimilaritycheck-filtersame-1plus05-fixedge
+TUNED_MODEL_NAME=qwen-ms32-chain-binary
+# TUNED_MODEL_NAME=ms32-entropy-tree-advantage-value-binary-8-4-2
+# TUNED_MODEL_NAME=ms32-multi-chain-orm
+# TUNED_MODEL_NAME=ms32-entropy-tree-advantage-value-orm
+
 # TUNED_MODEL_NAME=$1
 
 python auto_upload.py \
     --base_path $EVAL_DIR/$TUNED_MODEL_NAME \
-    --project_name openrlhf_code_rl \
-    --run_name $TUNED_MODEL_NAME \
+    --project_name openrlhf_math_mcts \
+    --run_name $TUNED_MODEL_NAME-eval \

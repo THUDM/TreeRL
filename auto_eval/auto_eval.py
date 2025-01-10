@@ -44,7 +44,9 @@ def get_checkpoint_paths(base_dir, checkpoint_dirs=None):
     for dir_name in checkpoint_dirs:
         dir_path = base_path / dir_name
         if dir_path.exists():
-            checkpoints = list(dir_path.glob('**/*_actor_global_step*'))
+            # checkpoints = list(dir_path.glob('**/*_actor_global_step*'))
+            #匹配所有带_actor_global_step或带epoch的文件
+            checkpoints = list(dir_path.glob('**/*_actor_global_step*')) + list(dir_path.glob('**/*epoch_*')) + list(dir_path.glob('**/*hf_*')) + list(dir_path.glob('**/*checkpoint*'))
             if checkpoints:
                 print(f"Found {len(checkpoints)} checkpoints in {dir_name}")
                 all_checkpoints.extend([str(p) for p in checkpoints])
@@ -168,8 +170,14 @@ def main():
         # if not checkpoint_paths:
         #     print("No checkpoints found.")
         #     break
+        try:
+            checkpoint_paths = sorted(checkpoint_paths,key=lambda x: int(x.split('step')[-1]))
+        except:
+            checkpoint_paths = sorted(checkpoint_paths)
+        print(f"Found {len(checkpoint_paths)} checkpoints",checkpoint_paths)
+        # exit(1)
 
-        for checkpoint_path in sorted(checkpoint_paths):
+        for checkpoint_path in (checkpoint_paths):
             model_name = get_model_name(checkpoint_path)
 
             # 检查是否已经评测过
@@ -210,5 +218,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    

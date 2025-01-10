@@ -153,7 +153,7 @@ class RewardDataset(Dataset):
         self.max_length = max_length
 
         self.current_model = strategy.args.pretrain
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             self.eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
         else:
             self.eos_token_id = None
@@ -241,9 +241,9 @@ class RewardDataset(Dataset):
             conversation.extend([{"role": "user", "content": prompt}, {"role": "assistant", "content": response}])
             # rejected_conv = [{"role": "user", "metadata": "", "content": x["prompt"]}, {"role": "assistant", "content": x["response"]} for x in history] + [{"role": "user", "content": prompt}, {"role": "assistant", "content": rejected}]
             conversation = self.tokenizer.apply_chat_template(conversation)
-            with open("/workspace/lurui/test/llama_conversation.txt", "w") as f:
-                f.write(conversation)
-                f.write("\n")
+            # with open("/workspace/lurui/test/llama_conversation.txt", "w") as f:
+            #     f.write(conversation)
+            #     f.write("\n")
             print(conversation)
             # rejected_conv = self.tokenizer.apply_chat_template(rejected_conv)
             attention_mask = [1] * conversation
@@ -589,7 +589,7 @@ class RewardProcessDataset(Dataset):
         self.max_length = max_length
 
         self.current_model = strategy.args.pretrain
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             self.eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
         else:
             self.eos_token_id = None
@@ -764,7 +764,7 @@ class RewardProcessDatasetInference(Dataset):
         self.max_length = max_length
 
         self.current_model = strategy.args.pretrain
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             self.eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
         else:
             self.eos_token_id = None
@@ -885,7 +885,7 @@ class RewardMultiTaskDataset(Dataset):
         self.max_length = max_length
 
         self.current_model = strategy.args.pretrain
-        if "glm" in self.current_model:
+        if "glm" in self.current_model.lower():
             self.eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
         else:
             self.eos_token_id = None
@@ -981,9 +981,9 @@ class RewardMultiTaskDataset(Dataset):
             conversation.extend([{"role": "user", "content": prompt}, {"role": "assistant", "content": response}])
             # rejected_conv = [{"role": "user", "metadata": "", "content": x["prompt"]}, {"role": "assistant", "content": x["response"]} for x in history] + [{"role": "user", "content": prompt}, {"role": "assistant", "content": rejected}]
             conversation = self.tokenizer.apply_chat_template(conversation)
-            with open("/workspace/lurui/test/llama_conversation.txt", "w") as f:
-                f.write(conversation)
-                f.write("\n")
+            # with open("/workspace/lurui/test/llama_conversation.txt", "w") as f:
+            #     f.write(conversation)
+            #     f.write("\n")
             print(conversation)
             # rejected_conv = self.tokenizer.apply_chat_template(rejected_conv)
             attention_mask = [1] * conversation
