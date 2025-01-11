@@ -314,9 +314,9 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
         
         leaf_normalize(all_leaves,root,average_one_generation)
         selected_terminals = select_terminal(all_leaves,num_traces,balance_ratio)
-        with open("/workspace/lurui/openrlhf-mcts/data/tree.jsonl","a") as f:
-            f.write(json.dumps(convert_to_json(root)))
-            f.write("\n")
+        # with open("/workspace/lurui/openrlhf-mcts/data/tree_local.jsonl","a") as f:
+        #     f.write(json.dumps(convert_to_json(root)))
+        #     f.write("\n")
         
         return root, selected_terminals
     except Exception as e:
