@@ -183,15 +183,17 @@ class TreeNode:
 
         return result
 
-def build_into_tree_format(tree_lists,decode_fn,num_traces) -> MCTSNode:
+def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,average_one_generation=False) -> MCTSNode:
     # from IPython import embed
     # embed()
     all_leaves = []
     try:
         def convert_to_json(node: MCTSNode):
             if not node.children:
+                print("answer_token: ",node.answer_token)
                 return {
                     "answer": node.answer,
+                    "answer_token": node.answer_token,
                     "R" : node.R,
                     "depth": node.depth,
                     "main_chain": node.main_chain,
@@ -201,8 +203,10 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces) -> MCTSNode:
                     "accumulated_value": node.accumulated_value
                 }
             else:
+                print("answer_token: ",node.answer_token)
                 return {
                     "answer": node.answer,
+                    "answer_token": node.answer_token,
                     "R" : node.R,
                     "depth": node.depth,
                     "main_chain": node.main_chain,
@@ -308,12 +312,11 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces) -> MCTSNode:
             if len(tree_list) > 0:
                 root.children.append(build_tree_node(decode_fn,tree_list[0], root))
         
-        leaf_normalize(all_leaves)
-        selected_terminals = select_terminal(all_leaves,num_traces)
-
-        # with open("/workspace/lurui/openrlhf-mcts/data/tree.jsonl","w") as f:
-        #     f.write(json.dumps(convert_to_json(root)))
-        #     f.write("\n")
+        leaf_normalize(all_leaves,root,average_one_generation)
+        selected_terminals = select_terminal(all_leaves,num_traces,balance_ratio)
+        with open("/workspace/lurui/openrlhf-mcts/data/tree.jsonl","a") as f:
+            f.write(json.dumps(convert_to_json(root)))
+            f.write("\n")
         
         return root, selected_terminals
     except Exception as e:
@@ -321,19 +324,22 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces) -> MCTSNode:
         from IPython import embed
         embed()
         
-def leaf_normalize(nodes):
+def leaf_normalize(nodes,root,average_one_generation:bool = False):
     leaf_correctness = [leaf.R for leaf in nodes]
     print("leaf_correctness",leaf_correctness)
     _sum = sum(leaf_correctness)
     num = len(leaf_correctness) - 1
     if num == 0:
-        return
+        # return
+        assert False, "entropy num_traces == 0"
     else:
         mean = [(_sum - leaf_correctness[i]) / num for i in range(len(leaf_correctness))]
         for i, leaf in enumerate(nodes):
             leaf.R = leaf.R - mean[i]
             leaf.accumulated_value = leaf.R
             leaf_backpropagate(leaf)
+        if average_one_generation:
+            update_accumulated_values(root)
             
 def leaf_backpropagate(node: MCTSNode):
     if node.terminal and node.main_chain:
@@ -355,30 +361,84 @@ def leaf_backpropagate(node: MCTSNode):
             parent.accumulated_value += node.accumulated_value
             parent = parent.parent
         
-def select_terminal(nodes,num_traces):
-    random.shuffle(nodes)
+def compute_accumulated_value(node: MCTSNode):
+    if not node.children:  # If the node is a leaf node
+        return node.accumulated_value
 
-    selected_terminals = []
-    remaining_terminals = []
+    # Post-order traversal: first process all children
+    total_value = 0
+    terminal_children = 0
+    for child in node.children:
+        if child.terminal_in_subtree > 0:
+            terminal_children += 1
+            total_value += compute_accumulated_value(child)
 
-    # Traverse the shuffled paths and select the first pass_ratio == 1 path
-    for node in nodes:
-        if node.main_chain and len(selected_terminals) == 0:
-            selected_terminals.append(node)
-        else:
-            remaining_terminals.append(node)
+    # Calculate the average accumulated value for the current node
+    node.accumulated_value = total_value / terminal_children if terminal_children > 0 else 0
+    return node.accumulated_value
 
-    # Calculate how many additional paths we need
-    remaining_num_traces = num_traces - len(selected_terminals)
+# Helper function to initialize calculation from the root node
+def update_accumulated_values(root):
+    compute_accumulated_value(root)
 
-    # Randomly select remaining_num_traces paths from the remaining_paths if possible
-    if remaining_num_traces > 0:
-        selected_terminals.extend(random.sample(remaining_terminals, min(
-            remaining_num_traces, len(remaining_terminals))))
+def select_terminal(nodes, num_traces, balance_ratio = 0):
+    if balance_ratio == 0:
+        random.shuffle(nodes)
+        selected_terminals = []
+        remaining_terminals = []
 
-    # Shuffle the selected paths to ensure they are returned in random order
-    random.shuffle(selected_terminals)
-    assert len(
-        selected_terminals) == num_traces, f"len(selected_paths) = {len(selected_terminals)} != num_traces = {num_traces}"
+        # Traverse the shuffled paths and select the first pass_ratio == 1 path
+        for node in nodes:
+            if node.main_chain and len(selected_terminals) == 0:
+                selected_terminals.append(node)
+            else:
+                remaining_terminals.append(node)
 
-    return selected_terminals
+        # Calculate how many additional paths we need
+        remaining_num_traces = num_traces - len(selected_terminals)
+
+        # Randomly select remaining_num_traces paths from the remaining_paths if possible
+        if remaining_num_traces > 0:
+            selected_terminals.extend(random.sample(remaining_terminals, min(
+                remaining_num_traces, len(remaining_terminals))))
+
+        # Shuffle the selected paths to ensure they are returned in random order
+        random.shuffle(selected_terminals)
+        assert len(
+            selected_terminals) == num_traces, f"len(selected_paths) = {len(selected_terminals)} != num_traces = {num_traces}"
+
+        return selected_terminals
+    else:
+        random.shuffle(nodes)
+        num_correct_needed = int(num_traces * balance_ratio)
+        num_incorrect_needed = int(num_traces * balance_ratio)
+
+        selected_correct = []
+        selected_incorrect = []
+        remaining_terminals = []
+
+        # Traverse the shuffled nodes and select correct and incorrect nodes
+        for node in nodes:
+            if node.main_chain and len(selected_correct) < num_correct_needed:
+                selected_correct.append(node)
+            elif not node.main_chain and len(selected_incorrect) < num_incorrect_needed:
+                selected_incorrect.append(node)
+            else:
+                remaining_terminals.append(node)
+        
+        # Calculate how many additional terminals we need
+        num_selected = len(selected_correct) + len(selected_incorrect)
+        remaining_num_traces = num_traces - num_selected
+        print(f"num_correct = {len(selected_correct)}, num_incorrect = {len(selected_incorrect)},remaining_num_traces = {remaining_num_traces}")
+
+        selected_terminals = selected_correct + selected_incorrect
+
+        # Randomly select remaining_num_traces paths from remaining_terminals if possible
+        if remaining_num_traces > 0:
+            selected_terminals.extend(random.sample(remaining_terminals, min(remaining_num_traces, len(remaining_terminals))))
+
+        # Shuffle the selected terminals to ensure they are returned in random order
+        random.shuffle(selected_terminals)
+        assert len(selected_terminals) == num_traces, f"len(selected_terminals) = {len(selected_terminals)} != num_traces = {num_traces}"
+
+        return selected_terminals

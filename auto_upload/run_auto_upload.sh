@@ -7,7 +7,7 @@
 # EVAL_DIR=/workspace/lurui/rm_simple_evals/RL_auto_results
 EVAL_DIR=/workspace/lurui/rm_simple_evals/RL_auto_results
 # example 
-TUNED_MODEL_NAME=qwen-ms32-chain-binary
+TUNED_MODEL_NAME=ms32-mcts-advantage-value-binary-onegeneration
 # TUNED_MODEL_NAME=ms32-entropy-tree-advantage-value-binary-8-4-2
 # TUNED_MODEL_NAME=ms32-multi-chain-orm
 # TUNED_MODEL_NAME=ms32-entropy-tree-advantage-value-orm

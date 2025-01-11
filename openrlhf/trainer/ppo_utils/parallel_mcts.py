@@ -360,6 +360,7 @@ class MCTSr(BaseModel):
     use_pure_binary:bool = False
     shallow_enwide: bool = False
     system_prompt :Optional[str] = None
+    average_one_generation:bool = False
     eos_tokens_set :List[int] = [151329,151336,151338]
     # def __init__(self, temperature, top_p, model_name, stops=None):
     #     super().__init__()
@@ -673,6 +674,9 @@ class MCTSr(BaseModel):
             self.leaf_normalize(self.leaves)
             for leaf in self.leaves:
                 self.leaf_backpropagate(leaf)
+            if self.average_one_generation:
+                print("average one generation")
+                self.update_accumulated_values()
             self.select_terminal()
         else:
             self.select_terminal()
@@ -1058,6 +1062,28 @@ class MCTSr(BaseModel):
     #                     break
     #         self.selected_terminals = selected_terminals
     #         return True
+    def compute_accumulated_value(self,node: MCTSNode):
+        if not node.children:  # If the node is a leaf node
+            return node.accumulated_value
+
+        # Post-order traversal: first process all children
+        total_value = 0
+        terminal_children = 0
+        for child in node.children:
+            if child.terminal_in_subtree > 0:
+                terminal_children += 1
+                total_value += self.compute_accumulated_value(child)
+        print("children value",total_value,terminal_children)
+
+        # Calculate the average accumulated value for the current node
+        node.accumulated_value = total_value / terminal_children if terminal_children > 0 else 0
+        return node.accumulated_value
+
+    
+    # Helper function to initialize calculation from the root node
+    def update_accumulated_values(self):
+        self.compute_accumulated_value(self.root)
+
 
     def select_terminal(self):
         # 从self.leaves中选择self.path_num 个叶子节点, 尽可能挑选同样数量的正确和错误的叶子，同一个父亲的叶子如果同对同错，只能选一个
@@ -1399,6 +1425,7 @@ def mcts_worker(
         use_pure_binary = args["use_pure_binary"],
         shallow_enwide = args["shallow_enwide"],
         system_prompt=system_prompt,
+        average_one_generation = args["average_one_generation"],
     )
     # print(mcts.max_children)
     start_time = time.time()
@@ -1414,7 +1441,7 @@ def mcts_worker(
         #     json.dump(tree_json, f)
         #     f.write("\n")
         # print("selected_terminals",mcts.selected_terminals[0])
-        paths = gather_paths(mcts.selected_terminals,args["path_num"],parent_shift = mcts.parent_shift,use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward)
+        paths = gather_paths(mcts.selected_terminals,args["path_num"],parent_shift = mcts.parent_shift,use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward,average_one_generation = mcts.average_one_generation)
         time_used = time.time() - start_time
         pass_num = pass_rate(paths)
         os.makedirs("logs/outputs", exist_ok=True)
@@ -1516,17 +1543,20 @@ def normalize_all_paths(paths,step_level_norm = False):
                 node["state_value"] = node["state_value"] - mean
         return paths
 
-def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dict[str, Any]]:
+def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False,average_one_generation:bool = False) -> List[Dict[str, Any]]:
     if parent_shift:
         path = []
         while node.parent is not None:
-            parent_value = node.parent.accumulated_value / node.parent.terminal_in_subtree
-            child_value = node.accumulated_value / node.terminal_in_subtree
+            if average_one_generation:
+                print("average_one_generation when gather")
+                parent_value = node.parent.accumulated_value
+                child_value = node.accumulated_value
+            else:
+                parent_value = node.parent.accumulated_value / node.parent.terminal_in_subtree
+                child_value = node.accumulated_value / node.terminal_in_subtree
             if node.terminal:
-                assert node.terminal_in_subtree == 1, "terminal_in_subtree is not 1"
-            # print("pass_ratio",parent_value,child_value)
+                assert node.terminal_in_subtree == 1, f"terminal_in_subtree is not 1,{node.terminal_in_subtree}"
             path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value - parent_value,"state_value":child_value})
-            # path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value})
             node = node.parent
         return path[::-1]
     else:
@@ -1543,8 +1573,7 @@ def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False) -> List[Dic
             node = node.parent
         return path[::-1][1:]
 
-
-def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False) -> List[List[Dict[str, Any]]]:
+def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False,average_one_generation:bool=False) -> List[List[Dict[str, Any]]]:
     paths = []
     if len(selected_terminals) < pass_k:
         return None
@@ -1552,7 +1581,7 @@ def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bo
     terminal_values = [leaf.accumulated_value for leaf in selected_terminals]
     # 添加 selected_terminal 的叶子节点路径
     for terminal_node in selected_terminals:
-        paths.append(path_from_root_to_node(terminal_node,parent_shift))
+        paths.append(path_from_root_to_node(terminal_node,parent_shift,average_one_generation))
     assert len(paths) == pass_k, f"Failed to generate {pass_k} paths,{len(paths)} instead"
     paths = fill_in_paths(paths)
     if use_chain_reward:

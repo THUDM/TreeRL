@@ -113,21 +113,23 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
         args = {
             "temperature": 1.2,
             "top_p": 0.9,
-            "m": 8,
-            "n": 4,
-            "l": 2,
+            "m": 2,
+            "n": 1,
+            "l": 1,
             "t": 2,
             "evaluator_urls": evaluator_urls,
             "extractor_urls": extractor_urls,
             "eos_tokens": eos_tokens,
             "use_pure_binary": True,
             "entropy_rm_urls": ["http://172.18.73.102:8000/v1"],
-            "num_traces": 32,
+            "num_traces": 2,
             "use_pure_RM" : False,
             "use_orm_reward" : False,
             "use_chain_reward" : False,
             "step_level_norm" : False,
             "use_state_value_reward" : False,
+            "balance_ratio": 0.2,
+            "average_one_generation" : True,
         }
 
         manager = EntropyGuidedChainLocalManager(
@@ -158,6 +160,7 @@ if __name__ == '__main__':
     # RL 调用参数
     # MODEL_PATH = "/data/o1-cloud/checkpoints/sft/glm_9b_1102"
 
+    # MODEL_PATH = "/data/share/checkpoint/glm-o1-2w-sft"
     MODEL_PATH = "/workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381"
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_PATH,
@@ -222,6 +225,7 @@ if __name__ == '__main__':
     # 以下是用于本地评测 omnimath-500 passrate 的代码
     eval_path = "/workspace/lurui/rm_simple_evals/data/omni_math/omnimath-500.jsonl"
     output_file = "./res/output_8_4_2_2.jsonl"
+    # tokenizer_path = "/data/share/checkpoint/glm-o1-2w-sft"
     tokenizer_path = "/workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381"
     evaluator_urls = ["http://172.18.74.194:8000/v1"]
     extractor_urls = ["http://172.18.74.52:8000/v1"]

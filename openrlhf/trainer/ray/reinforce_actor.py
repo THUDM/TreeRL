@@ -355,6 +355,8 @@ class ActorModelRayActor(BasePPORole):
             first_token_temperature = args.first_token_temperature,
             use_pure_binary = args.use_pure_binary,
             use_entropy_tree = args.use_entropy_tree,
+            average_one_generation = args.average_one_generation,
+            balance_ratio = args.balance_ratio,
             m = args.m,
             n = args.n,
             l = args.l,
