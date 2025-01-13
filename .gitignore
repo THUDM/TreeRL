@@ -168,3 +168,4 @@ auto_upload/*
 auto_eval/*
 openrlhf/trainer/ppo_utils/configs
 scripts_local
+scripts

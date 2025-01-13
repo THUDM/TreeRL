@@ -80,6 +80,7 @@ class EntropyGuidedChainLocalManager:
         answer_str: str,
         args: Dict[str, Any] = None,
         system_prompt=None,
+        max_length=7144,
     ) -> Dict[str, Any]:
         """
         熵引导的链式推理。
@@ -115,15 +116,19 @@ class EntropyGuidedChainLocalManager:
 
         # 获取初始推理结果
         # initial_results = query_local_vllm_completions_with_logprobs(
-        initial_results = query_local_vllm_ids_with_logprobs(
-            initial_prompt_ids,
-            llm=self.llm,
-            skip_special_tokens=False,
-            max_tokens=4096,
-            stops=self.eos_tokens_set,
-            temperature=self.args["temperature"],
-            top_p=self.args["top_p"],
-        )
+        for _ in range(4):
+            initial_results = query_local_vllm_ids_with_logprobs(
+                initial_prompt_ids,
+                llm=self.llm,
+                skip_special_tokens=False,
+                max_tokens=max_length,
+                stops=self.eos_tokens_set,
+                temperature=self.args["temperature"],
+                top_p=self.args["top_p"],
+            )
+            if initial_results is None or initial_results[0] is None:
+                continue
+        
 
         for idx, (content_token_ids, _, finish_reason, _, log_probs) in enumerate(zip(*initial_results)):
             root_node = TreeNode(
@@ -184,11 +189,13 @@ class EntropyGuidedChainLocalManager:
                 m_tree_top_n_prompt_ids,
                 llm=self.llm,
                 skip_special_tokens=False,
-                max_tokens=4096,
+                max_tokens=max_length,
                 stops=self.eos_tokens_set,
                 temperature=self.args["temperature"],
                 top_p=self.args["top_p"],
             )
+            if inference_results is None or inference_results[0] is None:
+                continue
 
             # 处理结果，更新树结构
             for i, (content_token_ids, _, finish_reason, _, log_probs) in enumerate(zip(*inference_results)):

@@ -680,8 +680,10 @@ class NaiveExperienceMaker(ABC):
         print("current model",self.current_model)
         if "glm" in self.current_model.lower():
             return tokenize_fn_chatglm(self.tokenizer, texts, max_length, device)
-        if "qwen" or "llama" in self.current_model.lower():
+        elif "qwen" or "llama" in self.current_model.lower():
             return tokenize_fn_llama(self.tokenizer, texts, max_length, device,system_prompt=system_prompt)
+        else:
+            raise ValueError(f"Unsupported model: {self.current_model}")
 
         batch = self.tokenizer(
             texts,
@@ -1734,7 +1736,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         }
 
     def sample_responses(self, prompts: List[str], num_trace_per_sample: int = 1,file_name = "test.jsonl", **generate_kwargs):
-            
+        torch.cuda.empty_cache()
+
         device = torch.cuda.current_device()
 
         _wait_time = 0
@@ -2110,7 +2113,9 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             value = None
 
         assert not (self.strategy.args.normalize_reward_from_multi_traces_with_rloo and self.strategy.args.normalize_reward_from_multi_traces), f"normalize_reward_from_multi_traces_with_rloo and normalize_reward_from_multi_traces cannot be set to True at the same time"
-            
+
+        torch.cuda.empty_cache()
+
         if num_trace_per_sample > 1: # and not self.remote_reward_url:
             div_std = not getattr(self.strategy.args, "normalize_reward_mean_only", False)
 
@@ -2180,6 +2185,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         # print("pass_rate shape:",pass_rate.shape,"pass_at_1 shape:",pass_at_1.shape)
         assert pass_rate.shape == pass_at_1.shape, f"pass_rate_shape: {pass_rate.shape} != pass_at_1_shape: {pass_at_1.shape}"
 
+        torch.cuda.empty_cache()
+
         return {
             "action_mask": action_mask,
             "attention_mask": attention_mask,
@@ -2201,6 +2208,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
     def sample_responses_bymcts(self, prompts: List[str], num_trace_per_sample: int = 1,file_name = "test.jsonl", **generate_kwargs):
         # if self.strategy.args.process_supervision:
         #     return self.sample_responses_prm(prompts, num_trace_per_sample, **generate_kwargs)
+        torch.cuda.empty_cache()
         print("prompts: ",len(prompts), prompts)
             
         device = torch.cuda.current_device()
@@ -2315,9 +2323,9 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                             question, answer = extract_qa_for_glm(item)
                             queries[i] = (question, answer)
                             new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
-                            os.makedirs(os.path.dirname(file_name), exist_ok=True)
-                            with open(file_name, "a") as f:
-                                f.write(json.dumps(new_data) + "\n")
+                            # os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            # with open(file_name, "a") as f:
+                            #     f.write(json.dumps(new_data) + "\n")
                             # with open("/workspace/lurui/openrlhf-glm/logs/outputs/queries.jsonl", "a") as f:
                             #     f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"tree"}) + "\n")
                             # print(question,answer)
@@ -2325,9 +2333,9 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                             question, answer = extract_qa_for_qwen(item)
                             queries[i] = (question, answer)
                             new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
-                            os.makedirs(os.path.dirname(file_name), exist_ok=True)
-                            with open(file_name, "a") as f:
-                                f.write(json.dumps(new_data) + "\n")
+                            # os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            # with open(file_name, "a") as f:
+                                # f.write(json.dumps(new_data) + "\n")
                             # with open("/workspace/lurui/openrlhf-glm/logs/outputs/queries.jsonl", "a") as f:
                             #     f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"tree"}) + "\n")
                             # raise NotImplementedError
@@ -2414,6 +2422,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 _wait_time += wait_time
                 _actor_time += actor_time
                 
+        torch.cuda.empty_cache()
+
         overlong_mask = torch.cat(_overlong_masks)
         action_mask = zero_pad_batch(_action_mask, side="right")
         # advantage = zero_pad_batch(_advantage, side="right")
@@ -2556,6 +2566,9 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         else:
             pass_rate = torch.zeros(action_log_probs.shape[0], device=device)
         print("_raw_reward",_raw_reward.shape,_raw_reward[0])
+
+        torch.cuda.empty_cache()
+
         return {
             "action_mask": action_mask,
             "attention_mask": attention_mask,
@@ -3418,6 +3431,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             output_token_ids = sum([len(x["token_answer"]) for x in path])
             max_output_len = max(max_output_len, output_token_ids)
 
+        print(f"************ found max_output_tokens: {max_output_len}, max_input_len: {max_input_len} *********")
         pad_token_id = self.tokenizer.pad_token_id
         sequences = []
         overlong = []
@@ -3456,6 +3470,9 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         )
         overlong_mask = torch.tensor(overlong).to("cuda") # 1 for long, 0 for short
         print("seq_rewards",seq_rewards.shape,sequences.shape,attention_mask.shape,action_mask.shape,overlong_mask.shape,correct_terminal,correct_terminal_count/total_terminals)
+        
+        torch.cuda.empty_cache()
+        
         return sequences.to("cuda"), seq_rewards.to("cuda"), attention_mask.to("cuda"), action_mask.to("cuda"), overlong_mask,correct_terminal,correct_terminal_count/total_terminals
 
     def _generate_vllm_mcts_use_vinevalue(self, prompts: List[str], num_trace_per_sample:int, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

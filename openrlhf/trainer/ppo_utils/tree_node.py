@@ -216,6 +216,7 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
                     "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
                     "accumulated_value": node.accumulated_value,
                 }
+                
         def build_tree_node(decode_fn,tree_node: TreeNode, parent_mcts_node: Optional[MCTSNode] = None) -> MCTSNode:
             # 对 child_nodes 按照 parent_node_split_idx 进行排序
             tree_node.child_nodes.sort(key=lambda x: x.parent_node_split_idx)
@@ -314,9 +315,9 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
         
         leaf_normalize(all_leaves,root,average_one_generation)
         selected_terminals = select_terminal(all_leaves,num_traces,balance_ratio)
-        with open("/workspace/lurui/openrlhf-mcts/data/tree.jsonl","a") as f:
-            f.write(json.dumps(convert_to_json(root)))
-            f.write("\n")
+        # with open("/workspace/lurui/openrlhf-mcts/data/tree.jsonl","a") as f:
+        #     f.write(json.dumps(convert_to_json(root)))
+        #     f.write("\n")
         
         return root, selected_terminals
     except Exception as e:

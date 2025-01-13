@@ -344,9 +344,9 @@ def check_result(
         return None, 0
     check = check_equality(answer, label, urls=checker_urls)
     print("===", check, "===", answer, label)
-    with open("/workspace/lurui/openrlhf-glm/logs/outputs/checker_mcts.jsonl", "a") as f:
-        f.write(json.dumps({"question": question, "response": response,
-                "extracted_answer": answer, "label": label, "check": check}) + "\n")
+    # with open("/workspace/lurui/openrlhf-glm/logs/outputs/checker_mcts.jsonl", "a") as f:
+        # f.write(json.dumps({"question": question, "response": response,
+                # "extracted_answer": answer, "label": label, "check": check}) + "\n")
     return answer, 1 if check else 0
 
 
@@ -865,6 +865,7 @@ def query_local_vllm_ids_with_logprobs(
                 outputs = ray.get(llm.generate.remote(
                     prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
             except:
+                continue
                 # print("ray.get error")
                 outputs = llm.generate(
                     prompt_token_ids=prompt_token_ids, sampling_params=sampling_params

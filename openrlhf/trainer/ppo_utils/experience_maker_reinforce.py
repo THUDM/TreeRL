@@ -374,6 +374,8 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
         experience_cpu.to_device("cpu")
         # self._ref = self.critic.append.remote(experience_cpu)
 
+        torch.cuda.empty_cache()
+        
         self.actor.train()  # reset model state
         return experience
 

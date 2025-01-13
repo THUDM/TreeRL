@@ -664,11 +664,11 @@ class MCTSr(BaseModel):
                 terminal_flag = True
                 break
 
-        os.makedirs("/logs/outputs", exist_ok=True)
-        with open("logs/outputs/leaves.jsonl", "a") as f:
-            #输出len(self.leaves)数量即可
-            f.write(json.dumps({"leaf num": len(self.leaves)}))
-            f.write("\n")
+        # os.makedirs("/logs/outputs", exist_ok=True)
+        # with open("logs/outputs/leaves.jsonl", "a") as f:
+        #     #输出len(self.leaves)数量即可
+        #     f.write(json.dumps({"leaf num": len(self.leaves)}))
+        #     f.write("\n")
         
         if self.parent_shift:
             self.leaf_normalize(self.leaves)

@@ -72,6 +72,8 @@ class Actor(nn.Module):
 
             print(f"########## loading actor model from: {pretrain_or_model} ##########")
             if "qwen" in pretrain_or_model.lower():
+                if attn_implementation != "flash_attention_2":
+                    attn_implementation = "sdpa"
                 self.model = AutoModelForCausalLM.from_pretrained(
                     pretrain_or_model,
                     attn_implementation=attn_implementation,
