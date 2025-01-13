@@ -391,6 +391,7 @@ class MCTSr(BaseModel):
     shallow_enwide: bool = False
     system_prompt :Optional[str] = None
     average_one_generation:bool = False
+    use_value_only:bool = False
     eos_tokens_set :List[int] = [151329,151336,151338]
     # def __init__(self, temperature, top_p, model_name, stops=None):
     #     super().__init__()
@@ -1451,6 +1452,7 @@ def mcts_worker(
         select_correct_leaf = args["select_correct_leaf"],
         use_chain_reward = args["use_chain_reward"],
         use_state_value_reward = args["use_state_value_reward"],
+        use_value_only = args["use_value_only"],
         use_pure_RM = args["use_pure_RM"],
         use_pure_binary = args["use_pure_binary"],
         shallow_enwide = args["shallow_enwide"],
@@ -1471,7 +1473,7 @@ def mcts_worker(
         #     json.dump(tree_json, f)
         #     f.write("\n")
         # print("selected_terminals",mcts.selected_terminals[0])
-        paths = gather_paths(mcts.root,mcts.selected_terminals,args["path_num"],parent_shift = mcts.parent_shift,use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward,average_one_generation = mcts.average_one_generation,advantage_mix_allancestor=args["advantage_mix_allancestor"])
+        paths = gather_paths(mcts.root,mcts.selected_terminals,args["path_num"],parent_shift = mcts.parent_shift,use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward,use_value_only = mcts.use_value_only,average_one_generation = mcts.average_one_generation,advantage_mix_allancestor=args["advantage_mix_allancestor"])
         time_used = time.time() - start_time
         pass_num = pass_rate(paths)
         os.makedirs("logs/outputs", exist_ok=True)
@@ -1599,7 +1601,7 @@ def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False,average_one_
             node = node.parent
         return path[::-1][1:]
 
-def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False,average_one_generation:bool=False,advantage_mix_allancestor:bool=False) -> List[List[Dict[str, Any]]]:
+def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False,use_value_only:bool=False,average_one_generation:bool=False,advantage_mix_allancestor:bool=False) -> List[List[Dict[str, Any]]]:
     paths = []
     if len(selected_terminals) < pass_k:
         return None
@@ -1642,13 +1644,20 @@ def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,p
         terminal_values = normalize_selected_terminals(selected_terminals)
         for path in paths:
             for node in path:
-                node["value"] = (node["value"] + terminal_values[paths.index(path)])/2
+                # node["value"] = (node["value"] + terminal_values[paths.index(path)])/2
+                node["value"] = (node["value"] + terminal_values[paths.index(path)])
     elif use_state_value_reward:
         print("use state value reward in mcts!!")
         # paths = normalize_all_paths(paths,step_level_norm)
         for path in paths:
             for node in path:
-                node["value"] = (node["value"] + node["state_value"])/2
+                # node["value"] = (node["value"] + node["state_value"])/2
+                node["value"] = (node["value"] + node["state_value"])
+    elif use_value_only:
+        print("use value only in mcts!!")
+        for path in paths:
+            for node in path:
+                node["value"] = node["state_value"]
     else:
         print("use pure advantage in mcts!!")
     print("path num",len(paths))
@@ -1707,7 +1716,7 @@ if __name__ == "__main__":
         enforce_eager=True
     )
     # args = {"temperature": 1.2, "top_p": 0.9, "max_depth": 40, "max_nodes": 256, "max_children": 4, "min_children":4, "shallow_enwide":False,"exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": 16, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": 16,"prompt_max_len":1024,"max_token_num":4096,"max_time_use":6000,"step_level_norm":False,"random_pick":True,"parent_shift":True,"use_orm_reward":False,"select_correct_leaf":False,"use_chain_reward":True,"use_state_value_reward":True,"use_pure_RM":True}
-    args = {"temperature": 1.2, "top_p": 0.9, "max_depth": 40, "max_nodes": 256, "max_children": 4,"min_children":2, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "qwen", "pass_k": 32, "backprop": 0, "max_node_per_depth": 32, "first_token_temperature": 1, "look_ahead": 0, "concurrent_num": 8, "path_num": 32,"prompt_max_len":1024,"max_token_num":4096,"max_time_use":6000,"step_level_norm":False,"random_pick":True,"parent_shift":True,"use_orm_reward":False,"select_correct_leaf":True,"use_chain_reward":False,"use_state_value_reward":True,"use_pure_RM":False,"use_pure_binary":True,"average_one_generation":True,"advantage_mix_allancestor":False}
+    args = {"temperature": 1.2, "top_p": 0.9, "max_depth": 40, "max_nodes": 256, "max_children": 4,"min_children":2, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "qwen", "pass_k": 32, "backprop": 0, "max_node_per_depth": 32, "first_token_temperature": 1, "look_ahead": 0, "concurrent_num": 8, "path_num": 32,"prompt_max_len":1024,"max_token_num":4096,"max_time_use":6000,"step_level_norm":False,"random_pick":True,"parent_shift":True,"use_orm_reward":False,"select_correct_leaf":True,"use_chain_reward":False,"use_state_value_reward":False,"use_value_only":True,"use_pure_RM":False,"use_pure_binary":True,"average_one_generation":True,"advantage_mix_allancestor":False}
     
     
     input_file = "/workspace/lurui/pattern_mcts/search_algorithms/mcts/data/math500/MATH500.jsonl"
