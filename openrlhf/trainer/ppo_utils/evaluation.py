@@ -432,9 +432,11 @@ def query_local_vllm_completions_ids(
 
     for try_counter in range(RETRY_COUNT):
         try:
-            outputs = ray.get(llm.generate.remote(
-                sampling_params=sampling_params, prompt_token_ids=prompt_token_ids))
-            # outputs = llm.generate(prompt_token_ids=prompt_token_ids, sampling_params=sampling_params)
+            try:
+                outputs = ray.get(llm.generate.remote(
+                    sampling_params=sampling_params, prompt_token_ids=prompt_token_ids))
+            except:
+                outputs = llm.generate(prompt_token_ids=prompt_token_ids, sampling_params=sampling_params)
             # content_token_list = torch.tensor([[outs.token_ids for outs in output.outputs] for output in outputs])
             content_token_list = [
                 [list(outs.token_ids) for outs in output.outputs] for output in outputs]
@@ -751,7 +753,7 @@ def top_k_sampling(llm, prompts, stops=None, skip_special_tokens=True, top_p=0.9
         outputs = ray.get(llm.generate.remote(
             prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
     except:
-        print("ray.get error")
+        # print("ray.get error")
         outputs = llm.generate(
             prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
         )
@@ -799,8 +801,13 @@ def query_local_vllm_completions_with_logprobs(
         try:
             # outputs = llm.generate(
             #     prompts=prompts, sampling_params=sampling_params)
-            outputs = ray.get(llm.generate.remote(
-                prompts=prompts, sampling_params=sampling_params))
+            try:
+                outputs = ray.get(llm.generate.remote(
+                    prompts=prompts, sampling_params=sampling_params))
+            except:
+                outputs = llm.generate(
+                    prompts=prompts, sampling_params=sampling_params
+                )
             for output in outputs:
                 log_probs_dict_lists = list(output.outputs[0].logprobs)
                 content_tokens = [[next(iter(log_probs_dict.values(
@@ -865,7 +872,6 @@ def query_local_vllm_ids_with_logprobs(
                 outputs = ray.get(llm.generate.remote(
                     prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
             except:
-                continue
                 # print("ray.get error")
                 outputs = llm.generate(
                     prompt_token_ids=prompt_token_ids, sampling_params=sampling_params

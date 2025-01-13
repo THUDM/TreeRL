@@ -3412,13 +3412,17 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
 
             paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, decode_fn, args,system_prompt=system_prompt)
         assert paths is not None, f"paths is None, prompts: {prompts}"
-        # print("paths:",paths)
-        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/treepath_entropy.jsonl", "a") as f:
-        #     steps = []
-        #     for path in paths:
-        #         for node in path:
-        #             steps.append({"value":node["value"],"pass_ratio":node["pass_ratio"]})
-        #     f.write(json.dumps({"paths":steps,"use entropy tree": use_entropy_tree}) + "\n")
+        print("paths:",paths)
+        os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs",exist_ok=True)
+        with open("/workspace/lurui/openrlhf-glm/logs/outputs/treepath_entropy_new.jsonl", "a") as f:
+            # f.write(json.dumps({"paths":paths,"problem":prompts[0]}) + "\n")
+            paths_log = []
+            for p in paths:
+                p_log = []
+                for node in p:
+                    p_log.append({"value":node["value"],"state_value":node["state_value"],"pass_ratio":node["pass_ratio"]})
+                paths_log.append(p_log)
+            f.write(json.dumps({"paths":paths_log}) + "\n")
             
         # NOTE: concat all outputs to following format:
         #

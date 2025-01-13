@@ -116,7 +116,7 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
             "m": 8,
             "n": 4,
             "l": 2,
-            "t": 2,
+            "t": 1,
             "evaluator_urls": evaluator_urls,
             "extractor_urls": extractor_urls,
             "eos_tokens": eos_tokens,
@@ -127,10 +127,10 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
             "use_orm_reward" : False,
             "use_chain_reward" : False,
             "step_level_norm" : False,
-            "use_state_value_reward" : False,
+            "use_state_value_reward" : True,
             "balance_ratio": 0.2,
             "average_one_generation" : True,
-            "advantage_mix_allancestor" : True,
+            "advantage_mix_allancestor" : False,
         }
 
         manager = EntropyGuidedChainLocalManager(
