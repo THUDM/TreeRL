@@ -79,36 +79,66 @@ QUEUE_SIZE = 10000
 NUM_PROCESS = 50
 from transformers import AutoTokenizer
 
+try:
+    with open("tools/api_configs/api_config_llama3.1_max_request_1.json") as f:
+        api_checker_config = json.load(f)
 
-with open("tools/api_configs/api_config_llama3.1_max_request_1.json") as f:
-    api_checker_config = json.load(f)
+    EVALUATOR_URLS = []
+    ips = api_checker_config['ip']
+    for key, value in ips.items():
+        EVALUATOR_URLS.extend([key for _ in range(value)])
 
-EVALUATOR_URLS = []
-ips = api_checker_config['ip']
-for key, value in ips.items():
-    EVALUATOR_URLS.extend([key for _ in range(value)])
+    # with open("./configs/api_config_rm_general.json") as f:
+    #     rm_api_config = json.load(f)
+    # with open("/workspace/lurui/openrlhf-glm/openrlhf/trainer/ppo_utils/configs/api_qwen_rm.json") as f:
+    #     rm_api_config = json.load(f)
 
-# with open("./configs/api_config_rm_general.json") as f:
-#     rm_api_config = json.load(f)
-# with open("/workspace/lurui/openrlhf-glm/openrlhf/trainer/ppo_utils/configs/api_qwen_rm.json") as f:
-#     rm_api_config = json.load(f)
+    with open("tools/api_configs/api_qwen72_v6_rm.json") as f:
+        rm_api_config = json.load(f)
 
-with open("tools/api_configs/api_qwen72_v6_rm.json") as f:
-    rm_api_config = json.load(f)
+    RM_URLS = []
+    ips = rm_api_config['ip']
+    for key, value in ips.items():
+        RM_URLS.extend([key for _ in range(value)])
+        
+        
+    with open("tools/api_configs/api_extractor.json") as f:
+        api_extractor_config = json.load(f)
 
-RM_URLS = []
-ips = rm_api_config['ip']
-for key, value in ips.items():
-    RM_URLS.extend([key for _ in range(value)])
-    
-    
-with open("tools/api_configs/api_extractor.json") as f:
-    api_extractor_config = json.load(f)
+    EXTRACTOR_URLS = []
+    ips = api_extractor_config['ip']
+    for key, value in ips.items():
+        EXTRACTOR_URLS.extend([key for _ in range(value)])
+except:
+    with open("/workspace/lurui/openrlhf-glm/tools/api_configs/api_config_llama3.1_max_request_1.json") as f:
+        api_checker_config = json.load(f)
 
-EXTRACTOR_URLS = []
-ips = api_extractor_config['ip']
-for key, value in ips.items():
-    EXTRACTOR_URLS.extend([key for _ in range(value)])
+    EVALUATOR_URLS = []
+    ips = api_checker_config['ip']
+    for key, value in ips.items():
+        EVALUATOR_URLS.extend([key for _ in range(value)])
+
+    # with open("./configs/api_config_rm_general.json") as f:
+    #     rm_api_config = json.load(f)
+    # with open("/workspace/lurui/openrlhf-glm/openrlhf/trainer/ppo_utils/configs/api_qwen_rm.json") as f:
+    #     rm_api_config = json.load(f)
+
+    with open("/workspace/lurui/openrlhf-glm/tools/api_configs/api_qwen72_v6_rm.json") as f:
+        rm_api_config = json.load(f)
+
+    RM_URLS = []
+    ips = rm_api_config['ip']
+    for key, value in ips.items():
+        RM_URLS.extend([key for _ in range(value)])
+        
+        
+    with open("/workspace/lurui/openrlhf-glm/tools/api_configs/api_extractor.json") as f:
+        api_extractor_config = json.load(f)
+
+    EXTRACTOR_URLS = []
+    ips = api_extractor_config['ip']
+    for key, value in ips.items():
+        EXTRACTOR_URLS.extend([key for _ in range(value)])
 
 # import cProfile
 # import line_profiler
@@ -1425,7 +1455,7 @@ def mcts_worker(
         use_pure_binary = args["use_pure_binary"],
         shallow_enwide = args["shallow_enwide"],
         system_prompt=system_prompt,
-        average_one_generation = args["average_one_generation"],
+        average_one_generation = args["average_one_generation"]
     )
     # print(mcts.max_children)
     start_time = time.time()
@@ -1441,7 +1471,7 @@ def mcts_worker(
         #     json.dump(tree_json, f)
         #     f.write("\n")
         # print("selected_terminals",mcts.selected_terminals[0])
-        paths = gather_paths(mcts.selected_terminals,args["path_num"],parent_shift = mcts.parent_shift,use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward,average_one_generation = mcts.average_one_generation)
+        paths = gather_paths(mcts.root,mcts.selected_terminals,args["path_num"],parent_shift = mcts.parent_shift,use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward,average_one_generation = mcts.average_one_generation,advantage_mix_allancestor=args["advantage_mix_allancestor"])
         time_used = time.time() - start_time
         pass_num = pass_rate(paths)
         os.makedirs("logs/outputs", exist_ok=True)
@@ -1476,13 +1506,11 @@ def mcts_worker(
             f.write("use mcts_worker\n")
         return paths,root.state
 
-
 def get_stops(backbone="glm"):
     if backbone == "glm":
         return [271, 151336, 151329,151338, 2533, 382, 1447, 21467, 692]
     elif backbone == "qwen":
         return [151645, 271, 2533, 382, 1447, 21518, 692]
-
 
 def normalize_selected_terminals(selected_terminals: list[MCTSNode]):
     leaf_orm_value = [leaf.accumulated_value for leaf in selected_terminals]
@@ -1494,7 +1522,6 @@ def normalize_selected_terminals(selected_terminals: list[MCTSNode]):
         mean = [(_sum - leaf_orm_value[i]) / num for i in range(len(leaf_orm_value))]
         orm_normalized = [leaf_orm_value[i] - mean[i] for i in range(len(leaf_orm_value))]
         return orm_normalized
-
 
 def fill_in_paths(paths):
     # 对于每个路径，如果存在"value"=0，就用他的前一个节点的"value"填充
@@ -1508,7 +1535,6 @@ def fill_in_paths(paths):
                 # print("fill in value",path[i-1]["value"])
                 path[i]["value"] = path[i-1]["value"]
     return paths
-
 
 def normalize_all_paths(paths,step_level_norm = False):
     # 对所有路径进行归一化
@@ -1573,7 +1599,7 @@ def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False,average_one_
             node = node.parent
         return path[::-1][1:]
 
-def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False,average_one_generation:bool=False) -> List[List[Dict[str, Any]]]:
+def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False,average_one_generation:bool=False,advantage_mix_allancestor:bool=False) -> List[List[Dict[str, Any]]]:
     paths = []
     if len(selected_terminals) < pass_k:
         return None
@@ -1583,6 +1609,27 @@ def gather_paths(selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bo
     for terminal_node in selected_terminals:
         paths.append(path_from_root_to_node(terminal_node,parent_shift,average_one_generation))
     assert len(paths) == pass_k, f"Failed to generate {pass_k} paths,{len(paths)} instead"
+    if average_one_generation:
+        root_value = root.accumulated_value
+    else:
+        root_value = root.accumulated_value / root.terminal_in_subtree
+    if advantage_mix_allancestor:
+        print("use advantage mix all ancestor")
+        for path in paths:
+            # 每个节点的 value 都用其 state_value - 祖先.state_value，对所有祖先求平均
+            for i in range(len(path)):
+                if i == 0:
+                    path[i]["value"] = path[i]["state_value"]
+                else:
+                    sum_value = 0
+                    num_value = 0
+                    for j in range(i):
+                        sum_value += path[i]["state_value"] - path[j]["state_value"]
+                        num_value += 1
+                    sum_value += path[i]["state_value"] - root_value
+                    num_value += 1
+                    path[i]["value"] = sum_value / num_value
+        return paths
     paths = fill_in_paths(paths)
     if use_chain_reward:
         print("use chain reward in mcts!!")

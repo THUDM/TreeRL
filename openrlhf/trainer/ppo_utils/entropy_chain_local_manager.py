@@ -270,6 +270,7 @@ class EntropyGuidedChainLocalManager:
         ]
         root, selected_terminals = build_into_tree_format(self.tree_lists,self.decode_fn,args['num_traces'],args["balance_ratio"],args["average_one_generation"])
         paths = gather_paths(
+            root = root,
             selected_terminals = selected_terminals,
             pass_k = args['num_traces'],
             parent_shift = True,
@@ -278,6 +279,7 @@ class EntropyGuidedChainLocalManager:
             step_level_norm = args["step_level_norm"],
             use_state_value_reward = args["use_state_value_reward"],
             average_one_generation = args["average_one_generation"],
+            advantage_mix_allancestor = args["advantage_mix_allancestor"]
         )
         return paths
 

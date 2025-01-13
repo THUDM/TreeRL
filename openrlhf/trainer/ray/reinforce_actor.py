@@ -356,6 +356,7 @@ class ActorModelRayActor(BasePPORole):
             use_pure_binary = args.use_pure_binary,
             use_entropy_tree = args.use_entropy_tree,
             average_one_generation = args.average_one_generation,
+            advantage_mix_allancestor = args.advantage_mix_allancestor,
             balance_ratio = args.balance_ratio,
             m = args.m,
             n = args.n,

@@ -113,16 +113,16 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
         args = {
             "temperature": 1.2,
             "top_p": 0.9,
-            "m": 2,
-            "n": 1,
-            "l": 1,
+            "m": 8,
+            "n": 4,
+            "l": 2,
             "t": 2,
             "evaluator_urls": evaluator_urls,
             "extractor_urls": extractor_urls,
             "eos_tokens": eos_tokens,
             "use_pure_binary": True,
             "entropy_rm_urls": ["http://172.18.73.102:8000/v1"],
-            "num_traces": 2,
+            "num_traces": 32,
             "use_pure_RM" : False,
             "use_orm_reward" : False,
             "use_chain_reward" : False,
@@ -130,6 +130,7 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
             "use_state_value_reward" : False,
             "balance_ratio": 0.2,
             "average_one_generation" : True,
+            "advantage_mix_allancestor" : True,
         }
 
         manager = EntropyGuidedChainLocalManager(
@@ -234,10 +235,10 @@ if __name__ == '__main__':
 
     # Read input data
     with open(eval_path, "r", encoding="utf-8") as f:
-        datas = [json.loads(line) for line in f]
+        datas = [json.loads(line) for line in f][0:2]
 
     # Number of GPUs
-    num_gpus = 8
+    num_gpus = 2
 
     # Split data across GPUs
     data_batches = [datas[i::num_gpus] for i in range(num_gpus)]

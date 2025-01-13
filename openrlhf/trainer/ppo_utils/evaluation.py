@@ -261,7 +261,7 @@ def query_sglang_chat(
                 exit(1)
             print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
             with open("/workspace/lurui/openrlhf-glm/logs/outputs/api_error.jsonl", "a") as f:
-                f.write(json.dumps({"url": url, "error": str(
+                f.write(json.dumps({"url": urls, "error": str(
                     e), "request_data": request_data}) + "\n")
             time.sleep(sleep_time)
 
