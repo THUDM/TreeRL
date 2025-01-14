@@ -294,6 +294,7 @@ class MCTSNode(BaseModel):
     max_children: int = 3
     terminal_in_subtree: int = 0
     correct_terminal_in_subtree: int = 0
+    selected_terminal_in_subtree: int = 0
     accumulated_value: float = 0
     visited_terminal: int = 0
     repeat:bool = False
@@ -380,7 +381,7 @@ class MCTSr(BaseModel):
     leaves: List[int] = []
     step_level_norm: bool = True
     random_pick :bool = False
-    parent_shift: bool = False
+    use_weighted_value: bool = False
     use_orm_reward: bool = False
     select_correct_leaf: bool = False
     leaf_num_count: int = 1
@@ -481,6 +482,14 @@ class MCTSr(BaseModel):
                 parent.terminal_in_subtree += 1
                 parent.accumulated_value += node.accumulated_value
                 parent = parent.parent
+    
+    def selected_backpropagate(self, node: MCTSNode):
+        node.selected_terminal_in_subtree += 1
+        # 所有父亲的terminal_in_subtree都加1
+        parent = node.parent
+        while parent:
+            parent.selected_terminal_in_subtree += 1
+            parent = parent.parent
 
     def uct(self, node: MCTSNode,offset = 1):
         ## temp
@@ -701,22 +710,18 @@ class MCTSr(BaseModel):
         #     f.write(json.dumps({"leaf num": len(self.leaves)}))
         #     f.write("\n")
         
-        if self.parent_shift:
-            self.leaf_normalize(self.leaves)
-            for leaf in self.leaves:
-                self.leaf_backpropagate(leaf)
-            if self.average_one_generation:
-                print("average one generation")
-                self.update_accumulated_values()
-            self.select_terminal()
-        else:
-            self.select_terminal()
-
+        self.leaf_normalize(self.leaves)
+        for leaf in self.leaves:
+            self.leaf_backpropagate(leaf)
+        if self.average_one_generation:
+            print("average one generation")
+            self.update_accumulated_values()
+        self.select_terminal()
+        if self.use_weighted_value:
+            print("weighted value")
             for leaf in self.selected_terminals:
-                self.leaf_backpropagate(leaf)
-
-            if len(self.selected_terminals) > 1:
-                self.leaf_normalize()
+                self.selected_backpropagate(leaf)
+            self.weighted_update()
     
     def multi_language(self,text):
         """检查是否包含非英语内容（中文、日文、韩文、俄语）"""
@@ -1114,6 +1119,14 @@ class MCTSr(BaseModel):
     # Helper function to initialize calculation from the root node
     def update_accumulated_values(self):
         self.compute_accumulated_value(self.root)
+        
+    def compute_weighted_update(self, node: MCTSNode):
+        node.accumulated_value = node.accumulated_value * node.terminal_in_subtree / node.selected_terminal_in_subtree
+        for child in node.children:
+            self.compute_weighted_update(child)
+        
+    def weighted_update(self):
+        self.compute_weighted_update(self.root)
 
 
     def select_terminal(self):
@@ -1447,7 +1460,7 @@ def mcts_worker(
         max_time_use = args["max_time_use"],
         step_level_norm = args["step_level_norm"],
         random_pick = args["random_pick"],
-        parent_shift = args["parent_shift"],
+        use_weighted_value = args["use_weighted_value"],
         use_orm_reward = args["use_orm_reward"],
         select_correct_leaf = args["select_correct_leaf"],
         use_chain_reward = args["use_chain_reward"],
@@ -1473,7 +1486,7 @@ def mcts_worker(
         #     json.dump(tree_json, f)
         #     f.write("\n")
         # print("selected_terminals",mcts.selected_terminals[0])
-        paths = gather_paths(mcts.root,mcts.selected_terminals,args["path_num"],parent_shift = mcts.parent_shift,use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward,use_value_only = mcts.use_value_only,average_one_generation = mcts.average_one_generation,advantage_mix_allancestor=args["advantage_mix_allancestor"])
+        paths = gather_paths(mcts.root,mcts.selected_terminals,args["path_num"],use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward,use_value_only = mcts.use_value_only,average_one_generation = mcts.average_one_generation,advantage_mix_allancestor=args["advantage_mix_allancestor"])
         time_used = time.time() - start_time
         pass_num = pass_rate(paths)
         os.makedirs("logs/outputs", exist_ok=True)
@@ -1571,37 +1584,23 @@ def normalize_all_paths(paths,step_level_norm = False):
                 node["state_value"] = node["state_value"] - mean
         return paths
 
-def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False,average_one_generation:bool = False) -> List[Dict[str, Any]]:
-    if parent_shift:
-        path = []
-        while node.parent is not None:
-            if average_one_generation:
-                print("average_one_generation when gather")
-                parent_value = node.parent.accumulated_value
-                child_value = node.accumulated_value
-            else:
-                parent_value = node.parent.accumulated_value / node.parent.terminal_in_subtree
-                child_value = node.accumulated_value / node.terminal_in_subtree
-            if node.terminal:
-                assert node.terminal_in_subtree == 1, f"terminal_in_subtree is not 1,{node.terminal_in_subtree}"
-            path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value - parent_value,"state_value":child_value})
-            node = node.parent
-        return path[::-1]
-    else:
-        path = []
-        while node is not None:
-            print("pass_ratio", node.correct_terminal_in_subtree, node.terminal_in_subtree, node.accumulated_value)
-            path.append({
-                'answer': node.answer, 
-                'token_answer': node.answer_token,
-                'reward': node.value, 
-                "pass_ratio": node.correct_terminal_in_subtree / node.terminal_in_subtree,
-                "value": node.accumulated_value
-            })
-            node = node.parent
-        return path[::-1][1:]
+def path_from_root_to_node(node: MCTSNode,average_one_generation:bool = False) -> List[Dict[str, Any]]:
+    path = []
+    while node.parent is not None:
+        if average_one_generation:
+            print("average_one_generation when gather")
+            parent_value = node.parent.accumulated_value
+            child_value = node.accumulated_value
+        else:
+            parent_value = node.parent.accumulated_value / node.parent.terminal_in_subtree
+            child_value = node.accumulated_value / node.terminal_in_subtree
+        if node.terminal:
+            assert node.terminal_in_subtree == 1, f"terminal_in_subtree is not 1,{node.terminal_in_subtree}"
+        path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value - parent_value,"state_value":child_value})
+        node = node.parent
+    return path[::-1]
 
-def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False,use_value_only:bool=False,average_one_generation:bool=False,advantage_mix_allancestor:bool=False) -> List[List[Dict[str, Any]]]:
+def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False,use_value_only:bool=False,average_one_generation:bool=False,advantage_mix_allancestor:bool=False) -> List[List[Dict[str, Any]]]:
     paths = []
     if len(selected_terminals) < pass_k:
         return None
@@ -1609,7 +1608,7 @@ def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,p
     terminal_values = [leaf.accumulated_value for leaf in selected_terminals]
     # 添加 selected_terminal 的叶子节点路径
     for terminal_node in selected_terminals:
-        paths.append(path_from_root_to_node(terminal_node,parent_shift,average_one_generation))
+        paths.append(path_from_root_to_node(terminal_node,average_one_generation))
     assert len(paths) == pass_k, f"Failed to generate {pass_k} paths,{len(paths)} instead"
     if average_one_generation:
         root_value = root.accumulated_value
@@ -1715,8 +1714,8 @@ if __name__ == "__main__":
         dtype="bfloat16",
         enforce_eager=True
     )
-    # args = {"temperature": 1.2, "top_p": 0.9, "max_depth": 40, "max_nodes": 256, "max_children": 4, "min_children":4, "shallow_enwide":False,"exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": 16, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": 16,"prompt_max_len":1024,"max_token_num":4096,"max_time_use":6000,"step_level_norm":False,"random_pick":True,"parent_shift":True,"use_orm_reward":False,"select_correct_leaf":False,"use_chain_reward":True,"use_state_value_reward":True,"use_pure_RM":True}
-    args = {"temperature": 1.2, "top_p": 0.9, "max_depth": 40, "max_nodes": 256, "max_children": 4,"min_children":2, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "qwen", "pass_k": 32, "backprop": 0, "max_node_per_depth": 32, "first_token_temperature": 1, "look_ahead": 0, "concurrent_num": 8, "path_num": 32,"prompt_max_len":1024,"max_token_num":4096,"max_time_use":6000,"step_level_norm":False,"random_pick":True,"parent_shift":True,"use_orm_reward":False,"select_correct_leaf":True,"use_chain_reward":False,"use_state_value_reward":False,"use_value_only":True,"use_pure_RM":False,"use_pure_binary":True,"average_one_generation":True,"advantage_mix_allancestor":False}
+    # args = {"temperature": 1.2, "top_p": 0.9, "max_depth": 40, "max_nodes": 256, "max_children": 4, "min_children":4, "shallow_enwide":False,"exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": 16, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": 16,"prompt_max_len":1024,"max_token_num":4096,"max_time_use":6000,"step_level_norm":False,"random_pick":True,"use_orm_reward":False,"select_correct_leaf":False,"use_chain_reward":True,"use_state_value_reward":True,"use_pure_RM":True}
+    args = {"temperature": 1.2, "top_p": 0.9, "max_depth": 40, "max_nodes": 256, "max_children": 4,"min_children":2, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "qwen", "pass_k": 32, "backprop": 0, "max_node_per_depth": 32, "first_token_temperature": 1, "look_ahead": 0, "concurrent_num": 8, "path_num": 32,"prompt_max_len":1024,"max_token_num":4096,"max_time_use":6000,"step_level_norm":False,"random_pick":True,"use_orm_reward":False,"select_correct_leaf":True,"use_chain_reward":False,"use_state_value_reward":False,"use_value_only":True,"use_pure_RM":False,"use_pure_binary":True,"average_one_generation":True,"advantage_mix_allancestor":False}
     
     
     input_file = "/workspace/lurui/pattern_mcts/search_algorithms/mcts/data/math500/MATH500.jsonl"

@@ -11,6 +11,8 @@ import torch
 RETRY_COUNT = 10
 MAX_CONTENT_FILTER_RETRY = 0
 
+LOCAL_TEST = False
+
 EXTRACTION_TEMPLATE = """
 Look at the following math problem and extract the final answer, such as final results or option. 
 ## Question: 
@@ -438,7 +440,10 @@ def query_local_vllm_completions_ids(
                 outputs = ray.get(llm.generate.remote(
                     sampling_params=sampling_params, prompt_token_ids=prompt_token_ids))
             except:
-                outputs = llm.generate(prompt_token_ids=prompt_token_ids, sampling_params=sampling_params)
+                if LOCAL_TEST:
+                    outputs = llm.generate(prompt_token_ids=prompt_token_ids, sampling_params=sampling_params)
+                else:
+                    continue
             # content_token_list = torch.tensor([[outs.token_ids for outs in output.outputs] for output in outputs])
             content_token_list = [
                 [list(outs.token_ids) for outs in output.outputs] for output in outputs]
@@ -756,9 +761,12 @@ def top_k_sampling(llm, prompts, stops=None, skip_special_tokens=True, top_p=0.9
             prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
     except:
         # print("ray.get error")
-        outputs = llm.generate(
-            prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
-        )
+        if LOCAL_TEST:
+            outputs = llm.generate(
+                prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
+            )
+        else:
+            return None
     # print(outputs)
     first_tokens_lists = []
     for prompt_id, output in zip(prompt_token_ids, outputs):
@@ -807,9 +815,12 @@ def query_local_vllm_completions_with_logprobs(
                 outputs = ray.get(llm.generate.remote(
                     prompts=prompts, sampling_params=sampling_params))
             except:
-                outputs = llm.generate(
-                    prompts=prompts, sampling_params=sampling_params
-                )
+                if LOCAL_TEST:
+                    outputs = llm.generate(
+                        prompts=prompts, sampling_params=sampling_params
+                    )
+                else:
+                    continue
             for output in outputs:
                 log_probs_dict_lists = list(output.outputs[0].logprobs)
                 content_tokens = [[next(iter(log_probs_dict.values(
@@ -875,9 +886,12 @@ def query_local_vllm_ids_with_logprobs(
                     prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
             except:
                 # print("ray.get error")
-                outputs = llm.generate(
-                    prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
-                )
+                if LOCAL_TEST:
+                    outputs = llm.generate(
+                        prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
+                    )
+                else:
+                    continue
 
             for output in outputs:
                 assert len(output.outputs) == 1
