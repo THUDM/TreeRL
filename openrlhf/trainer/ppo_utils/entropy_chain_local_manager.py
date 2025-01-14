@@ -128,6 +128,8 @@ class EntropyGuidedChainLocalManager:
             )
             if initial_results is None or initial_results[0] is None:
                 continue
+            else:
+                break
         
 
         for idx, (content_token_ids, _, finish_reason, _, log_probs) in enumerate(zip(*initial_results)):
@@ -263,6 +265,8 @@ class EntropyGuidedChainLocalManager:
         paths['pass_k_result'] = pass_k_result
         paths['eval_time_use'] = time.time() - eval_time_start
         paths['time_use'] = time.time() - time_start
+        
+        print('eval_time_use: ', paths['eval_time_use'], '\ttime_use: ', paths['time_use'])
 
         # 序列化树结构
         paths['tree_structures'] = [
