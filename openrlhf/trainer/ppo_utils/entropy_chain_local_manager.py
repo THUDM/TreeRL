@@ -282,6 +282,7 @@ class EntropyGuidedChainLocalManager:
             use_chain_reward = args["use_chain_reward"],
             step_level_norm = args["step_level_norm"],
             use_state_value_reward = args["use_state_value_reward"],
+            use_value_only = args["use_value_only"],
             average_one_generation = args["average_one_generation"],
             advantage_mix_allancestor = args["advantage_mix_allancestor"]
         )

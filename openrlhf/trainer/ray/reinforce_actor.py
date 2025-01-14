@@ -351,6 +351,7 @@ class ActorModelRayActor(BasePPORole):
             select_correct_leaf = args.select_correct_leaf,
             use_chain_reward = args.use_chain_reward,
             use_state_value_reward = args.use_state_value_reward,
+            use_value_only = args.use_value_only,
             use_pure_RM = args.use_pure_RM,
             first_token_temperature = args.first_token_temperature,
             use_pure_binary = args.use_pure_binary,

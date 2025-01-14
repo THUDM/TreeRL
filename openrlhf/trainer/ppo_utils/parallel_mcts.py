@@ -1644,7 +1644,8 @@ def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,p
         terminal_values = normalize_selected_terminals(selected_terminals)
         for path in paths:
             for node in path:
-                node["value"] = (node["value"] + terminal_values[paths.index(path)])/2
+                # node["value"] = (node["value"] + terminal_values[paths.index(path)])/2
+                node["value"] = (node["value"] + terminal_values[paths.index(path)])
     elif use_state_value_reward:
         print("use state value reward in mcts!!")
         # paths = normalize_all_paths(paths,step_level_norm)
