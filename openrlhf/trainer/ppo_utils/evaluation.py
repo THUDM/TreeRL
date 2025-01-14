@@ -238,6 +238,7 @@ def query_sglang_chat(
 
             api_base = random.choice(urls)
             url = api_base + "/chat/completions"
+            print("url: ", url)
             response = requests.post(
                 url,
                 json=request_data,
@@ -259,6 +260,7 @@ def query_sglang_chat(
             sleep_time = 2 * try_counter + 1
             if sleep_time > 30:
                 exit(1)
+            print("url: ", url)
             print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
             with open("/workspace/lurui/openrlhf-glm/logs/outputs/api_error.jsonl", "a") as f:
                 f.write(json.dumps({"url": urls, "error": str(
@@ -318,9 +320,9 @@ def extract_answer(
 
 def check_equality(expr1: str, expr2: str, urls):
     prompt = EQUALITY_TEMPLATE % {"expression1": expr1, "expression2": expr2}
-    for _ in range(3):
+    for _ in range(10):
         response = query_sglang_chat(prompt, urls)
-        if len(response) == 0:
+        if response and len(response) == 0:
             continue
         else:
             break
