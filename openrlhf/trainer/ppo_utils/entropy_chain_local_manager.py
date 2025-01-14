@@ -23,6 +23,9 @@ except:
     )
 from IPython import embed
 
+from concurrent.futures import ThreadPoolExecutor
+from typing import List, Tuple
+
 
 class EntropyGuidedChainLocalManager:
     def __init__(
@@ -73,6 +76,73 @@ class EntropyGuidedChainLocalManager:
             'is_end': node.is_end,
             'children': [self.serialize_tree(child) for child in node.child_nodes]
         }
+
+    def evaluate_node(self, args: Dict[str, Any], problem_str: str, node: TreeNode) -> Tuple[float, float]:
+        """评估单个节点的分数
+
+        Returns:
+            Tuple[float, float]: (binary_score, final_score)
+        """
+        if node.is_end and node.finish_reason == "stop":
+            binary_score = check_result(
+                problem_str,
+                node.total_str,
+                self.answer_str,  # 需要将answer_str作为类属性存储
+                checker_urls=self.evaluator_urls,
+                extractor_urls=self.extractor_urls
+            )[-1]
+        else:
+            binary_score = 0
+
+        if args["use_pure_binary"]:
+            return binary_score, binary_score
+
+        # Get reward model score
+        value = get_qwen_remote_reward_model_value(
+            urls=args["entropy_rm_urls"],
+            question=problem_str,
+            response=node.total_str
+        )
+
+        if args["use_pure_RM"]:
+            a, b = 0.5, -2.898
+            x = a * (value - b)
+            final_score = 1 / (1 + math.exp(-x))
+        else:
+            sigmoid_value = 1 / (1 + math.exp(-value))
+            final_score = binary_score + 0.5 * sigmoid_value
+
+        return binary_score, final_score
+
+    def evaluate_trees(self, problem_str: str, answer_str: str, args: Dict[str, Any]) -> List[float]:
+        """并发评估所有树中的节点"""
+        self.answer_str = answer_str  # 临时存储供evaluate_node使用
+
+        # 收集所有需要评估的节点
+        evaluation_tasks = [
+            (args, problem_str, node)
+            for tree_list in self.tree_lists
+            for node in tree_list
+        ]
+
+        # 使用线程池并发评估
+        with ThreadPoolExecutor(max_workers=min(32, len(evaluation_tasks))) as executor:
+            results = list(executor.map(
+                lambda params: self.evaluate_node(*params),
+                evaluation_tasks
+            ))
+
+        # 更新节点分数并收集结果
+        pass_k_result = []
+        for (binary_score, final_score), (_, _, node) in zip(results, evaluation_tasks):
+            node.binary_score = binary_score
+            node.score = final_score
+            pass_k_result.append(binary_score)
+
+            if args["use_pure_RM"]:
+                print("entropy rm_score", final_score)
+
+        return pass_k_result
 
     def entropy_guided_chain(
         self,
@@ -130,7 +200,6 @@ class EntropyGuidedChainLocalManager:
                 continue
             else:
                 break
-        
 
         for idx, (content_token_ids, _, finish_reason, _, log_probs) in enumerate(zip(*initial_results)):
             root_node = TreeNode(
@@ -226,65 +295,76 @@ class EntropyGuidedChainLocalManager:
         eval_time_start = time.time()
 
         # 评估结果
-        pass_k_result = []
-        for tree_list in self.tree_lists:
-            for node in tree_list:
-                if node.is_end and node.finish_reason == "stop":
-                    response_str = node.total_str
-                    # response_str = response_str.split("<|user|>")[0]
-                    score = check_result(
-                        problem_str,
-                        response_str,
-                        answer_str,
-                        checker_urls=self.evaluator_urls,
-                        extractor_urls=self.extractor_urls
-                    )[-1]
-                    pass_k_result.append(score)
-                    node.binary_score = score
-                else:
-                    pass_k_result.append(0)
-                    node.binary_score = 0
-                if args["use_pure_binary"]:
-                    node.score = node.binary_score
-                else:
-                    value = get_qwen_remote_reward_model_value(
-                        urls=args["entropy_rm_urls"], question=problem_str, response=node.total_str)
-                    if args["use_pure_RM"]:
-                        a = 0.5
-                        b = -2.898
-                        x = a*(value-b)
-                        result = 1/(1+math.exp(-x))
-                        print("entropy rm_score", value, result)
-                        node.score = result
-                    else:
-                        sigmoid_value = 1 / (1 + math.exp(-value))
-                        coeff = 0.5
-                        value = node.binary_score + coeff * sigmoid_value
-                        node.score = value
+        # pass_k_result = []
+        # for tree_list in self.tree_lists:
+        #     for node in tree_list:
+        #         if node.is_end and node.finish_reason == "stop":
+        #             response_str = node.total_str
+        #             # response_str = response_str.split("<|user|>")[0]
+        #             score = check_result(
+        #                 problem_str,
+        #                 response_str,
+        #                 answer_str,
+        #                 checker_urls=self.evaluator_urls,
+        #                 extractor_urls=self.extractor_urls
+        #             )[-1]
+        #             pass_k_result.append(score)
+        #             node.binary_score = score
+        #         else:
+        #             pass_k_result.append(0)
+        #             node.binary_score = 0
+        #         if args["use_pure_binary"]:
+        #             node.score = node.binary_score
+        #         else:
+        #             value = get_qwen_remote_reward_model_value(
+        #                 urls=args["entropy_rm_urls"], question=problem_str, response=node.total_str)
+        #             if args["use_pure_RM"]:
+        #                 a = 0.5
+        #                 b = -2.898
+        #                 x = a*(value-b)
+        #                 result = 1/(1+math.exp(-x))
+        #                 print("entropy rm_score", value, result)
+        #                 node.score = result
+        #             else:
+        #                 sigmoid_value = 1 / (1 + math.exp(-value))
+        #                 coeff = 0.5
+        #                 value = node.binary_score + coeff * sigmoid_value
+        #                 node.score = value
+        # paths['pass_k_result'] = pass_k_result
+        # paths['eval_time_use'] = time.time() - eval_time_start
+        # paths['time_use'] = time.time() - time_start
 
-        paths['pass_k_result'] = pass_k_result
+        # 以上为串行评估，以下为并发评估
+        eval_time_start = time.time()
+        paths['pass_k_result'] = self.evaluate_trees(
+            problem_str, 
+            answer_str, 
+            args
+        )
         paths['eval_time_use'] = time.time() - eval_time_start
         paths['time_use'] = time.time() - time_start
-        
-        print('eval_time_use: ', paths['eval_time_use'], '\ttime_use: ', paths['time_use'])
+
+        print('eval_time_use: ',
+              paths['eval_time_use'], '\ttime_use: ', paths['time_use'])
 
         # 序列化树结构
         paths['tree_structures'] = [
             self.serialize_tree_list(tree_list) for tree_list in self.tree_lists
         ]
-        root, selected_terminals = build_into_tree_format(self.tree_lists,self.decode_fn,args['num_traces'],args["balance_ratio"],args["average_one_generation"])
+        root, selected_terminals = build_into_tree_format(
+            self.tree_lists, self.decode_fn, args['num_traces'], args["balance_ratio"], args["average_one_generation"])
         paths = gather_paths(
-            root = root,
-            selected_terminals = selected_terminals,
-            pass_k = args['num_traces'],
-            parent_shift = True,
-            use_orm_reward = args['use_orm_reward'],
-            use_chain_reward = args["use_chain_reward"],
-            step_level_norm = args["step_level_norm"],
-            use_state_value_reward = args["use_state_value_reward"],
-            use_value_only = args["use_value_only"],
-            average_one_generation = args["average_one_generation"],
-            advantage_mix_allancestor = args["advantage_mix_allancestor"]
+            root=root,
+            selected_terminals=selected_terminals,
+            pass_k=args['num_traces'],
+            parent_shift=True,
+            use_orm_reward=args['use_orm_reward'],
+            use_chain_reward=args["use_chain_reward"],
+            step_level_norm=args["step_level_norm"],
+            use_state_value_reward=args["use_state_value_reward"],
+            use_value_only=args["use_value_only"],
+            average_one_generation=args["average_one_generation"],
+            advantage_mix_allancestor=args["advantage_mix_allancestor"]
         )
         return paths
 
