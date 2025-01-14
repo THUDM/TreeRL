@@ -285,7 +285,7 @@ def get_stem_eval(
     use_rule_based_reward=False,
     use_general_reward_for_reason=False
 ):
-    remote_stem_urls = remote_urls["math"]
+    remote_stem_urls = remote_urls["math_checker"]
     
     extracted_answer, raw_remote_reward = check_result(remote_stem_urls, (query, response, label))
         
