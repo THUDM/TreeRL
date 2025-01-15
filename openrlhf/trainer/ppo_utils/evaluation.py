@@ -260,9 +260,9 @@ def query_sglang_chat(
             if sleep_time > 30:
                 exit(1)
             print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
-            with open("/workspace/lurui/openrlhf-glm/logs/outputs/api_error.jsonl", "a") as f:
-                f.write(json.dumps({"url": urls, "error": str(
-                    e), "request_data": request_data}) + "\n")
+            # with open("/workspace/lurui/openrlhf-glm/logs/outputs/api_error.jsonl", "a") as f:
+                # f.write(json.dumps({"url": urls, "error": str(
+                    # e), "request_data": request_data}) + "\n")
             time.sleep(sleep_time)
 
     return None
@@ -456,9 +456,9 @@ def query_local_vllm_completions_ids(
             sleep_time = 2 * try_counter + 1
             if sleep_time > 30:
                 exit(1)
-            with open("/workspace/lurui/openrlhf-glm/logs/outputs/error.log", "a") as f:
-                f.write(
-                    f"Error: {str(e)}, sleeping for {sleep_time} seconds\n")
+            # with open("/workspace/lurui/openrlhf-glm/logs/outputs/error.log", "a") as f:
+                # f.write(
+                    # f"Error: {str(e)}, sleeping for {sleep_time} seconds\n")
             time.sleep(sleep_time)
 
     return None, None, None, None, None

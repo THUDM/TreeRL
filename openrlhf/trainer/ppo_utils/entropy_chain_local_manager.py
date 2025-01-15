@@ -128,6 +128,7 @@ class EntropyGuidedChainLocalManager:
             )
             if initial_results is None or initial_results[0] is None:
                 continue
+            break
         
 
         for idx, (content_token_ids, _, finish_reason, _, log_probs) in enumerate(zip(*initial_results)):
