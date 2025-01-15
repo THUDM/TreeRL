@@ -294,6 +294,7 @@ class MCTSNode(BaseModel):
     max_children: int = 3
     terminal_in_subtree: int = 0
     correct_terminal_in_subtree: int = 0
+    selected_terminal_in_subtree: int = 0
     accumulated_value: float = 0
     visited_terminal: int = 0
     repeat:bool = False
@@ -380,7 +381,7 @@ class MCTSr(BaseModel):
     leaves: List[int] = []
     step_level_norm: bool = True
     random_pick :bool = False
-    parent_shift: bool = False
+    use_weighted_value: bool = False
     use_orm_reward: bool = False
     select_correct_leaf: bool = False
     leaf_num_count: int = 1
@@ -391,6 +392,7 @@ class MCTSr(BaseModel):
     shallow_enwide: bool = False
     system_prompt :Optional[str] = None
     average_one_generation:bool = False
+    use_value_only:bool = False
     eos_tokens_set :List[int] = [151329,151336,151338]
     # def __init__(self, temperature, top_p, model_name, stops=None):
     #     super().__init__()
@@ -480,6 +482,14 @@ class MCTSr(BaseModel):
                 parent.terminal_in_subtree += 1
                 parent.accumulated_value += node.accumulated_value
                 parent = parent.parent
+    
+    def selected_backpropagate(self, node: MCTSNode):
+        node.selected_terminal_in_subtree += 1
+        # 所有父亲的terminal_in_subtree都加1
+        parent = node.parent
+        while parent:
+            parent.selected_terminal_in_subtree += 1
+            parent = parent.parent
 
     def uct(self, node: MCTSNode,offset = 1):
         ## temp
@@ -700,22 +710,18 @@ class MCTSr(BaseModel):
         #     f.write(json.dumps({"leaf num": len(self.leaves)}))
         #     f.write("\n")
         
-        if self.parent_shift:
-            self.leaf_normalize(self.leaves)
-            for leaf in self.leaves:
-                self.leaf_backpropagate(leaf)
-            if self.average_one_generation:
-                print("average one generation")
-                self.update_accumulated_values()
-            self.select_terminal()
-        else:
-            self.select_terminal()
-
+        self.leaf_normalize(self.leaves)
+        for leaf in self.leaves:
+            self.leaf_backpropagate(leaf)
+        if self.average_one_generation:
+            print("average one generation")
+            self.update_accumulated_values()
+        self.select_terminal()
+        if self.use_weighted_value:
+            print("weighted value")
             for leaf in self.selected_terminals:
-                self.leaf_backpropagate(leaf)
-
-            if len(self.selected_terminals) > 1:
-                self.leaf_normalize()
+                self.selected_backpropagate(leaf)
+            self.weighted_update()
     
     def multi_language(self,text):
         """检查是否包含非英语内容（中文、日文、韩文、俄语）"""
@@ -1113,6 +1119,14 @@ class MCTSr(BaseModel):
     # Helper function to initialize calculation from the root node
     def update_accumulated_values(self):
         self.compute_accumulated_value(self.root)
+        
+    def compute_weighted_update(self, node: MCTSNode):
+        node.accumulated_value = node.accumulated_value * node.terminal_in_subtree / node.selected_terminal_in_subtree
+        for child in node.children:
+            self.compute_weighted_update(child)
+        
+    def weighted_update(self):
+        self.compute_weighted_update(self.root)
 
 
     def select_terminal(self):
@@ -1446,11 +1460,12 @@ def mcts_worker(
         max_time_use = args["max_time_use"],
         step_level_norm = args["step_level_norm"],
         random_pick = args["random_pick"],
-        parent_shift = args["parent_shift"],
+        use_weighted_value = args["use_weighted_value"],
         use_orm_reward = args["use_orm_reward"],
         select_correct_leaf = args["select_correct_leaf"],
         use_chain_reward = args["use_chain_reward"],
         use_state_value_reward = args["use_state_value_reward"],
+        use_value_only = args["use_value_only"],
         use_pure_RM = args["use_pure_RM"],
         use_pure_binary = args["use_pure_binary"],
         shallow_enwide = args["shallow_enwide"],
@@ -1471,7 +1486,7 @@ def mcts_worker(
         #     json.dump(tree_json, f)
         #     f.write("\n")
         # print("selected_terminals",mcts.selected_terminals[0])
-        paths = gather_paths(mcts.root,mcts.selected_terminals,args["path_num"],parent_shift = mcts.parent_shift,use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward,average_one_generation = mcts.average_one_generation,advantage_mix_allancestor=args["advantage_mix_allancestor"])
+        paths = gather_paths(mcts.root,mcts.selected_terminals,args["path_num"],use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward,use_value_only = mcts.use_value_only,average_one_generation = mcts.average_one_generation,advantage_mix_allancestor=args["advantage_mix_allancestor"])
         time_used = time.time() - start_time
         pass_num = pass_rate(paths)
         os.makedirs("logs/outputs", exist_ok=True)
@@ -1569,37 +1584,23 @@ def normalize_all_paths(paths,step_level_norm = False):
                 node["state_value"] = node["state_value"] - mean
         return paths
 
-def path_from_root_to_node(node: MCTSNode,parent_shift:bool = False,average_one_generation:bool = False) -> List[Dict[str, Any]]:
-    if parent_shift:
-        path = []
-        while node.parent is not None:
-            if average_one_generation:
-                print("average_one_generation when gather")
-                parent_value = node.parent.accumulated_value
-                child_value = node.accumulated_value
-            else:
-                parent_value = node.parent.accumulated_value / node.parent.terminal_in_subtree
-                child_value = node.accumulated_value / node.terminal_in_subtree
-            if node.terminal:
-                assert node.terminal_in_subtree == 1, f"terminal_in_subtree is not 1,{node.terminal_in_subtree}"
-            path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value - parent_value,"state_value":child_value})
-            node = node.parent
-        return path[::-1]
-    else:
-        path = []
-        while node is not None:
-            print("pass_ratio", node.correct_terminal_in_subtree, node.terminal_in_subtree, node.accumulated_value)
-            path.append({
-                'answer': node.answer, 
-                'token_answer': node.answer_token,
-                'reward': node.value, 
-                "pass_ratio": node.correct_terminal_in_subtree / node.terminal_in_subtree,
-                "value": node.accumulated_value
-            })
-            node = node.parent
-        return path[::-1][1:]
+def path_from_root_to_node(node: MCTSNode,average_one_generation:bool = False) -> List[Dict[str, Any]]:
+    path = []
+    while node.parent is not None:
+        if average_one_generation:
+            print("average_one_generation when gather")
+            parent_value = node.parent.accumulated_value
+            child_value = node.accumulated_value
+        else:
+            parent_value = node.parent.accumulated_value / node.parent.terminal_in_subtree
+            child_value = node.accumulated_value / node.terminal_in_subtree
+        if node.terminal:
+            assert node.terminal_in_subtree == 1, f"terminal_in_subtree is not 1,{node.terminal_in_subtree}"
+        path.append({'answer': node.answer, 'token_answer':node.answer_token,'reward': node.value,"pass_ratio":node.correct_terminal_in_subtree/node.terminal_in_subtree,"value":child_value - parent_value,"state_value":child_value})
+        node = node.parent
+    return path[::-1]
 
-def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,parent_shift:bool = False,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False,average_one_generation:bool=False,advantage_mix_allancestor:bool=False) -> List[List[Dict[str, Any]]]:
+def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,use_orm_reward:bool = False,use_chain_reward:bool=False,step_level_norm:bool=False,use_state_value_reward:bool=False,use_value_only:bool=False,average_one_generation:bool=False,advantage_mix_allancestor:bool=False) -> List[List[Dict[str, Any]]]:
     paths = []
     if len(selected_terminals) < pass_k:
         return None
@@ -1607,7 +1608,7 @@ def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,p
     terminal_values = [leaf.accumulated_value for leaf in selected_terminals]
     # 添加 selected_terminal 的叶子节点路径
     for terminal_node in selected_terminals:
-        paths.append(path_from_root_to_node(terminal_node,parent_shift,average_one_generation))
+        paths.append(path_from_root_to_node(terminal_node,average_one_generation))
     assert len(paths) == pass_k, f"Failed to generate {pass_k} paths,{len(paths)} instead"
     if average_one_generation:
         root_value = root.accumulated_value
@@ -1619,7 +1620,7 @@ def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,p
             # 每个节点的 value 都用其 state_value - 祖先.state_value，对所有祖先求平均
             for i in range(len(path)):
                 if i == 0:
-                    path[i]["value"] = path[i]["state_value"]
+                    path[i]["value"] = path[i]["state_value"] - root_value
                 else:
                     sum_value = 0
                     num_value = 0
@@ -1642,13 +1643,20 @@ def gather_paths(root:MCTSNode,selected_terminals: list[MCTSNode], pass_k: int,p
         terminal_values = normalize_selected_terminals(selected_terminals)
         for path in paths:
             for node in path:
-                node["value"] = (node["value"] + terminal_values[paths.index(path)])/2
+                # node["value"] = (node["value"] + terminal_values[paths.index(path)])/2
+                node["value"] = (node["value"] + terminal_values[paths.index(path)])
     elif use_state_value_reward:
         print("use state value reward in mcts!!")
         # paths = normalize_all_paths(paths,step_level_norm)
         for path in paths:
             for node in path:
-                node["value"] = (node["value"] + node["state_value"])/2
+                # node["value"] = (node["value"] + node["state_value"])/2
+                node["value"] = (node["value"] + node["state_value"])
+    elif use_value_only:
+        print("use value only in mcts!!")
+        for path in paths:
+            for node in path:
+                node["value"] = node["state_value"]
     else:
         print("use pure advantage in mcts!!")
     print("path num",len(paths))
@@ -1666,3 +1674,65 @@ def pass_rate(paths):
 # 封装为一个函数,输入为item,输出为paths
 def parallel_mcts(item, llm, tokenize_fn, detokenize_fn, args,system_prompt=None):
     return mcts_worker(item, llm, tokenize_fn, detokenize_fn, args["prompt_key"], args["answer_key"], args,system_prompt)
+
+if __name__ == "__main__":
+    os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+    
+    MODEL_PATH = "/workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381"
+    tokenizer = AutoTokenizer.from_pretrained(
+        MODEL_PATH,
+        trust_remote_code=True
+    )
+
+    # def tokenize_fn(texts, max_length=2048, device="cpu", system_prompt=None):
+    #     sample_input_ids = tokenizer.encode(
+    #         "[gMASK]<sop><|user|>\n" + texts[0][0],
+    #         add_special_tokens=False
+    #     )
+    #     sample_input_ids = sample_input_ids[-max_length:] + \
+    #         tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
+    #     return sample_input_ids
+
+    import torch
+
+    def tokenize_fn(texts, max_length=2048, device="cpu", system_prompt=None):
+        sample_input_ids = tokenizer.encode(
+            "[gMASK]<sop><|user|>\n" + texts[0][0], add_special_tokens=False)
+        sample_input_ids = sample_input_ids[-max_length:] + \
+            tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
+        output = {"input_ids": [torch.tensor(sample_input_ids)]}
+        return output
+
+    def decode_fn(ids):
+        return tokenizer.decode(ids, skip_special_tokens=False)
+    
+    llm = LLM(
+        model=MODEL_PATH,
+        tensor_parallel_size=1,
+        trust_remote_code=True,
+        seed=3407,
+        dtype="bfloat16",
+        enforce_eager=True
+    )
+    # args = {"temperature": 1.2, "top_p": 0.9, "max_depth": 40, "max_nodes": 256, "max_children": 4, "min_children":4, "shallow_enwide":False,"exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": 16, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": 16,"prompt_max_len":1024,"max_token_num":4096,"max_time_use":6000,"step_level_norm":False,"random_pick":True,"use_orm_reward":False,"select_correct_leaf":False,"use_chain_reward":True,"use_state_value_reward":True,"use_pure_RM":True}
+    args = {"temperature": 1.2, "top_p": 0.9, "max_depth": 40, "max_nodes": 256, "max_children": 4,"min_children":2, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "qwen", "pass_k": 32, "backprop": 0, "max_node_per_depth": 32, "first_token_temperature": 1, "look_ahead": 0, "concurrent_num": 8, "path_num": 32,"prompt_max_len":1024,"max_token_num":4096,"max_time_use":6000,"step_level_norm":False,"random_pick":True,"use_orm_reward":False,"select_correct_leaf":True,"use_chain_reward":False,"use_state_value_reward":False,"use_value_only":True,"use_pure_RM":False,"use_pure_binary":True,"average_one_generation":True,"advantage_mix_allancestor":False}
+    
+    
+    input_file = "/workspace/lurui/pattern_mcts/search_algorithms/mcts/data/math500/MATH500.jsonl"
+
+    # item = {"problem":data["Question"],"golden_answer":data["Answer"]}
+    item = {"problem":"Define\n\\[p = \\sum_{k = 1}^\\infty \\frac{1}{k^2} \\quad \\text{and} \\quad q = \\sum_{k = 1}^\\infty \\frac{1}{k^3}.\\]Find a way to write\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3}\\]in terms of $p$ and $q.$", "solution": "We count the number of times $\\frac{1}{n^3}$ appears in the sum\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3},\\]where $n$ is a fixed positive integer.  (In other words, we are conditioning the sum on $j + k$.)  We get a term of $\\frac{1}{n^3}$ each time $j + k = n.$  The pairs $(j,k)$ that work are $(1,n - 1),$ $(2,n - 2),$ $\\dots,$ $(n - 1,1),$ for a total of $n - 1$ pairs.  Therefore,\n\\begin{align*}\n\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3} &= \\sum_{n = 1}^\\infty \\frac{n - 1}{n^3} \\\\\n&= \\sum_{n = 1}^\\infty \\left( \\frac{n}{n^3} - \\frac{1}{n^3} \\right) \\\\\n&= \\sum_{n = 1}^\\infty \\left( \\frac{1}{n^2} - \\frac{1}{n^3} \\right) \\\\\n&= \\sum_{n = 1}^\\infty \\frac{1}{n^2} - \\sum_{n = 1}^\\infty \\frac{1}{n^3} \\\\\n&= \\boxed{p - q}.\n\\end{align*}", "golden_answer": "p - q"}
+    # item = {"problem":"How many positive whole-number divisors does 196 have?", "solution": "First prime factorize $196=2^2\\cdot7^2$.  The prime factorization of any divisor of 196 cannot include any primes other than 2 and 7.  We are free to choose either 0, 1, or 2 as the exponent of 2 in the prime factorization of a divisor of 196.  Similarly, we may choose 0, 1, or 2 as the exponent of 7.  In total, there are $3\\times 3=9$ possibilities for the prime factorization of a divisor of 196.  Distinct prime factorizations correspond to distinct integers, so there are $\\boxed{9}$ divisors of 196.","golden_answer":"9"}
+    paths = parallel_mcts(item, llm, tokenize_fn,decode_fn, args)
+    with open("/workspace/lurui/openrlhf-mcts/data/finalpath.jsonl", "w") as f:
+        json.dump(paths, f)
+
+    # with open(input_file, "r", encoding="utf-8") as f:
+    #     datas = [json.loads(line) for line in f]
+    #     for data in datas:
+    #         item = {"problem":data["Question"],"golden_answer":data["Answer"]}
+    #         # item = {"problem":"Define\n\\[p = \\sum_{k = 1}^\\infty \\frac{1}{k^2} \\quad \\text{and} \\quad q = \\sum_{k = 1}^\\infty \\frac{1}{k^3}.\\]Find a way to write\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3}\\]in terms of $p$ and $q.$", "solution": "We count the number of times $\\frac{1}{n^3}$ appears in the sum\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3},\\]where $n$ is a fixed positive integer.  (In other words, we are conditioning the sum on $j + k$.)  We get a term of $\\frac{1}{n^3}$ each time $j + k = n.$  The pairs $(j,k)$ that work are $(1,n - 1),$ $(2,n - 2),$ $\\dots,$ $(n - 1,1),$ for a total of $n - 1$ pairs.  Therefore,\n\\begin{align*}\n\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3} &= \\sum_{n = 1}^\\infty \\frac{n - 1}{n^3} \\\\\n&= \\sum_{n = 1}^\\infty \\left( \\frac{n}{n^3} - \\frac{1}{n^3} \\right) \\\\\n&= \\sum_{n = 1}^\\infty \\left( \\frac{1}{n^2} - \\frac{1}{n^3} \\right) \\\\\n&= \\sum_{n = 1}^\\infty \\frac{1}{n^2} - \\sum_{n = 1}^\\infty \\frac{1}{n^3} \\\\\n&= \\boxed{p - q}.\n\\end{align*}", "golden_answer": "p - q"}
+    #         # item = {"problem":"A group of $12$ pirates agree to divide a treasure chest of gold coins among themselves as follows. The $k^\\text{th}$ pirate to take a share takes $\\frac{k}{12}$ of the coins that remain in the chest. The number of coins initially in the chest is the smallest number for which this arrangement will allow each pirate to receive a positive whole number of coins. How many coins does the $12^{\\text{th}}$ pirate receive?\n$\\textbf{(A)} \\ 720 \\qquad  \\textbf{(B)} \\ 1296 \\qquad  \\textbf{(C)} \\ 1728 \\qquad  \\textbf{(D)} \\ 1925 \\qquad  \\textbf{(E)} \\ 3850$", "solution": "First prime factorize $196=2^2\\cdot7^2$.  The prime factorization of any divisor of 196 cannot include any primes other than 2 and 7.  We are free to choose either 0, 1, or 2 as the exponent of 2 in the prime factorization of a divisor of 196.  Similarly, we may choose 0, 1, or 2 as the exponent of 7.  In total, there are $3\\times 3=9$ possibilities for the prime factorization of a divisor of 196.  Distinct prime factorizations correspond to distinct integers, so there are $\\boxed{9}$ divisors of 196.","golden_answer":"9"}
+    #         paths = parallel_mcts(item, llm, tokenize_fn, args)
+    #         with open("/workspace/lurui/openrlhf-mcts/data/paths.json", "w") as f:
+    #             json.dump(paths, f)

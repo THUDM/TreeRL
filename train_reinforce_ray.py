@@ -222,7 +222,6 @@ if __name__ == "__main__":
     parser.add_argument("--max_time_use", type=float, default=360)
     parser.add_argument("--step_level_norm", action="store_true", default=False)
     parser.add_argument("--random_pick", action="store_true", default=False)
-    parser.add_argument("--parent_shift", action="store_true", default=False)
 
     parser.add_argument("--seed", type=int, default=42)
 
@@ -313,12 +312,15 @@ if __name__ == "__main__":
     parser.add_argument("--select_correct_leaf", action="store_true", default=False)
     parser.add_argument("--use_chain_reward", action="store_true", default=False)
     parser.add_argument("--use_state_value_reward", action="store_true", default=False)
+    parser.add_argument("--use_value_only", action="store_true", default=False)
     parser.add_argument("--use_pure_RM", action="store_true", default=False)
     parser.add_argument("--first_token_temperature", type=float, default=0)
     parser.add_argument("--use_pure_binary", action="store_true", default=False)
     parser.add_argument("--use_entropy_tree", action="store_true", default=False)
     parser.add_argument("--average_one_generation", action="store_true", default=False)
     parser.add_argument("--advantage_mix_allancestor", action="store_true", default=False)
+    parser.add_argument("--use_weighted_value", action="store_true", default=False)
+    parser.add_argument("--correct_bonus_ratio", type=float, default=1)
     parser.add_argument("--balance_ratio", type=float, default=0)
     parser.add_argument("--m", type=int, default=8)
     parser.add_argument("--n", type=int, default=4)

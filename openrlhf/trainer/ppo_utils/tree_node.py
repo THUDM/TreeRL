@@ -16,6 +16,7 @@ class MCTSNode(BaseModel):
     terminal: bool = False
     terminal_in_subtree: int = 0
     correct_terminal_in_subtree: int = 0
+    selected_terminal_in_subtree: int = 0
     accumulated_value: float = 0
     repeat:bool = False
     value: float = 0
@@ -183,7 +184,7 @@ class TreeNode:
 
         return result
 
-def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,average_one_generation=False) -> MCTSNode:
+def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,average_one_generation=False,use_weighted_value=False) -> MCTSNode:
     # from IPython import embed
     # embed()
     all_leaves = []
@@ -200,6 +201,7 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
                     "terminal": node.terminal,
                     "terminal_in_subtree": node.terminal_in_subtree,
                     "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
+                    "selected_terminal_in_subtree": node.selected_terminal_in_subtree,
                     "accumulated_value": node.accumulated_value
                 }
             else:
@@ -214,6 +216,7 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
                     "children": [convert_to_json(child) for child in node.children],
                     "terminal_in_subtree": node.terminal_in_subtree,
                     "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
+                    "selected_terminal_in_subtree": node.selected_terminal_in_subtree,
                     "accumulated_value": node.accumulated_value,
                 }
                 
@@ -315,9 +318,14 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
         
         leaf_normalize(all_leaves,root,average_one_generation)
         selected_terminals = select_terminal(all_leaves,num_traces,balance_ratio)
-        # with open("/workspace/lurui/openrlhf-mcts/data/tree.jsonl","a") as f:
-        #     f.write(json.dumps(convert_to_json(root)))
-        #     f.write("\n")
+        if use_weighted_value:
+            print("weighted value")
+            for leaf in selected_terminals:
+                selected_backpropagate(leaf)
+            compute_weighted_update(root)
+        with open("/workspace/lurui/openrlhf-mcts/data/entropy_tree_local.jsonl","a") as f:
+            f.write(json.dumps(convert_to_json(root)))
+            f.write("\n")
         
         return root, selected_terminals
     except Exception as e:
@@ -340,7 +348,7 @@ def leaf_normalize(nodes,root,average_one_generation:bool = False):
             leaf.accumulated_value = leaf.R
             leaf_backpropagate(leaf)
         if average_one_generation:
-            update_accumulated_values(root)
+            compute_accumulated_value(root)
             
 def leaf_backpropagate(node: MCTSNode):
     if node.terminal and node.main_chain:
@@ -377,10 +385,6 @@ def compute_accumulated_value(node: MCTSNode):
     # Calculate the average accumulated value for the current node
     node.accumulated_value = total_value / terminal_children if terminal_children > 0 else 0
     return node.accumulated_value
-
-# Helper function to initialize calculation from the root node
-def update_accumulated_values(root):
-    compute_accumulated_value(root)
 
 def select_terminal(nodes, num_traces, balance_ratio = 0):
     if balance_ratio == 0:
@@ -443,3 +447,18 @@ def select_terminal(nodes, num_traces, balance_ratio = 0):
         assert len(selected_terminals) == num_traces, f"len(selected_terminals) = {len(selected_terminals)} != num_traces = {num_traces}"
 
         return selected_terminals
+
+def selected_backpropagate(node: MCTSNode):
+    node.selected_terminal_in_subtree += 1
+    # 所有父亲的terminal_in_subtree都加1
+    parent = node.parent
+    while parent:
+        parent.selected_terminal_in_subtree += 1
+        parent = parent.parent
+
+def compute_weighted_update(node: MCTSNode):
+    if node.selected_terminal_in_subtree == 0:
+        return
+    node.accumulated_value = node.accumulated_value * node.terminal_in_subtree / node.selected_terminal_in_subtree
+    for child in node.children:
+        compute_weighted_update(child)
