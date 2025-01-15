@@ -331,6 +331,7 @@ if __name__ == "__main__":
     parser.add_argument("--reward_model_url", type=str, default=None)
     parser.add_argument("--extractor_url", type=str, default=None)
     
+    parser.add_argument("--wandb_id", type=str, default=None)
  
     args = parser.parse_args()
     train(args)
