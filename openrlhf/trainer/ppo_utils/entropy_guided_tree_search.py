@@ -130,8 +130,9 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
             "use_state_value_reward" : False,
             "use_value_only" : True,
             "balance_ratio": 0.2,
-            "average_one_generation" : True,
+            "average_one_generation" : False,
             "advantage_mix_allancestor" : False,
+            "use_weighted_value": False,
         }
 
         manager = EntropyGuidedChainLocalManager(
@@ -225,7 +226,7 @@ if __name__ == '__main__':
     #     json.dump({"path":paths},f,ensure_ascii=False)
 
     # 以下是用于本地评测 omnimath-500 passrate 的代码
-    eval_path = "/workspace/lurui/rm_simple_evals/data/omni_math/omnimath-500.jsonl"
+    eval_path = "/workspace/lurui/rm_simple_evals/data/math/MATH500.jsonl"
     output_file = "./res/output_8_4_2_2.jsonl"
     # tokenizer_path = "/data/share/checkpoint/glm-o1-2w-sft"
     tokenizer_path = "/workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381"

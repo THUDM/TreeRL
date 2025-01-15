@@ -11,6 +11,8 @@ import torch
 RETRY_COUNT = 10
 MAX_CONTENT_FILTER_RETRY = 0
 
+LOCAL_TEST = False
+
 EXTRACTION_TEMPLATE = """
 Look at the following math problem and extract the final answer, such as final results or option. 
 ## Question: 
@@ -262,9 +264,9 @@ def query_sglang_chat(
                 exit(1)
             print("url: ", url)
             print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
-            with open("/workspace/lurui/openrlhf-glm/logs/outputs/api_error.jsonl", "a") as f:
-                f.write(json.dumps({"url": urls, "error": str(
-                    e), "request_data": request_data}) + "\n")
+            # with open("/workspace/lurui/openrlhf-glm/logs/outputs/api_error.jsonl", "a") as f:
+            # f.write(json.dumps({"url": urls, "error": str(
+            # e), "request_data": request_data}) + "\n")
             time.sleep(sleep_time)
 
     return None
@@ -347,8 +349,8 @@ def check_result(
     check = check_equality(answer, label, urls=checker_urls)
     print("===", check, "===", answer, label)
     # with open("/workspace/lurui/openrlhf-glm/logs/outputs/checker_mcts.jsonl", "a") as f:
-        # f.write(json.dumps({"question": question, "response": response,
-                # "extracted_answer": answer, "label": label, "check": check}) + "\n")
+    # f.write(json.dumps({"question": question, "response": response,
+    # "extracted_answer": answer, "label": label, "check": check}) + "\n")
     return answer, 1 if check else 0
 
 
@@ -438,7 +440,11 @@ def query_local_vllm_completions_ids(
                 outputs = ray.get(llm.generate.remote(
                     sampling_params=sampling_params, prompt_token_ids=prompt_token_ids))
             except:
-                outputs = llm.generate(prompt_token_ids=prompt_token_ids, sampling_params=sampling_params)
+                if LOCAL_TEST:
+                    outputs = llm.generate(
+                        prompt_token_ids=prompt_token_ids, sampling_params=sampling_params)
+                else:
+                    continue
             # content_token_list = torch.tensor([[outs.token_ids for outs in output.outputs] for output in outputs])
             content_token_list = [
                 [list(outs.token_ids) for outs in output.outputs] for output in outputs]
@@ -460,9 +466,9 @@ def query_local_vllm_completions_ids(
             sleep_time = 2 * try_counter + 1
             if sleep_time > 30:
                 exit(1)
-            with open("/workspace/lurui/openrlhf-glm/logs/outputs/error.log", "a") as f:
-                f.write(
-                    f"Error: {str(e)}, sleeping for {sleep_time} seconds\n")
+            # with open("/workspace/lurui/openrlhf-glm/logs/outputs/error.log", "a") as f:
+                # f.write(
+                # f"Error: {str(e)}, sleeping for {sleep_time} seconds\n")
             time.sleep(sleep_time)
 
     return None, None, None, None, None
@@ -756,9 +762,12 @@ def top_k_sampling(llm, prompts, stops=None, skip_special_tokens=True, top_p=0.9
             prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
     except:
         # print("ray.get error")
-        outputs = llm.generate(
-            prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
-        )
+        if LOCAL_TEST:
+            outputs = llm.generate(
+                prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
+            )
+        else:
+            return None
     # print(outputs)
     first_tokens_lists = []
     for prompt_id, output in zip(prompt_token_ids, outputs):
@@ -807,9 +816,12 @@ def query_local_vllm_completions_with_logprobs(
                 outputs = ray.get(llm.generate.remote(
                     prompts=prompts, sampling_params=sampling_params))
             except:
-                outputs = llm.generate(
-                    prompts=prompts, sampling_params=sampling_params
-                )
+                if LOCAL_TEST:
+                    outputs = llm.generate(
+                        prompts=prompts, sampling_params=sampling_params
+                    )
+                else:
+                    continue
             for output in outputs:
                 log_probs_dict_lists = list(output.outputs[0].logprobs)
                 content_tokens = [[next(iter(log_probs_dict.values(
@@ -874,11 +886,14 @@ def query_local_vllm_ids_with_logprobs(
                 outputs = ray.get(llm.generate.remote(
                     prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
             except:
-                continue
+                # continue
                 # print("ray.get error")
-                # outputs = llm.generate(
-                #     prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
-                # )
+                if LOCAL_TEST:
+                    outputs = llm.generate(
+                        prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
+                    )
+                else:
+                    continue
 
             for output in outputs:
                 assert len(output.outputs) == 1

@@ -146,7 +146,9 @@ class ReinforceTrainer(ABC):
                 group=strategy.args.wandb_group,
                 name=strategy.args.wandb_run_name,
                 config=strategy.args.__dict__,
-                reinit=True,
+                # reinit=True,
+                id=strategy.args.wandb_id,
+                resume="allow",
             )
 
             wandb.define_metric("train/global_step")
@@ -176,6 +178,16 @@ class ReinforceTrainer(ABC):
 
         # self.strategy.copy_model_weight(self.initial_model, self.actor)
         
+        past_steps = 0
+        
+        if "_actor_global_step" in args.pretrain:
+            past_steps = int(args.pretrain.split("_actor_global_step")[-1])
+            print("*" * 20)
+            print("past_steps: ", past_steps)
+        else:
+            print("No past steps")
+            print("*" * 20)
+        
         for episode in range(args.num_episodes):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
                 self.prompts_dataloader.sampler.set_epoch(episode)
@@ -186,6 +198,11 @@ class ReinforceTrainer(ABC):
             )
 
             for rand_prompts in self.prompts_dataloader:
+                if past_steps > 0:
+                    past_steps -= 1
+                    global_step += 1
+                    pbar.update()
+                    continue
                 # experience = self.experience_maker.make_experience(rand_prompts, use_mcts = self.use_mcts, use_vinevalue = self.use_vinevalue, sample_table = self.sample_table, **self.generate_kwargs)
                 experience = self.experience_maker.make_experience(rand_prompts, use_mcts = self.use_mcts, use_vinevalue = self.use_vinevalue,use_sentence_level_value = False, **self.generate_kwargs)
 
