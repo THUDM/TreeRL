@@ -394,6 +394,8 @@ class MCTSr(BaseModel):
     average_one_generation:bool = False
     use_value_only:bool = False
     eos_tokens_set :List[int] = [151329,151336,151338]
+    a :float = 0.5
+    b :float = -2.898
     # def __init__(self, temperature, top_p, model_name, stops=None):
     #     super().__init__()
 
@@ -419,8 +421,8 @@ class MCTSr(BaseModel):
                 value = get_qwen_remote_reward_model_value(
                     urls= RM_URLS, question = self.problem, response = node.aggregate_answer)
                 if self.use_pure_RM:
-                    a = 0.5
-                    b = -2.898
+                    a = self.a
+                    b = self.b
                     x = a*(value-b)
                     result = 1/(1+math.exp(-x))
                     print("rm_score",value, result)
@@ -1470,7 +1472,9 @@ def mcts_worker(
         use_pure_binary = args["use_pure_binary"],
         shallow_enwide = args["shallow_enwide"],
         system_prompt=system_prompt,
-        average_one_generation = args["average_one_generation"]
+        average_one_generation = args["average_one_generation"],
+        a = args["a"],
+        b = args["b"],
     )
     # print(mcts.max_children)
     start_time = time.time()

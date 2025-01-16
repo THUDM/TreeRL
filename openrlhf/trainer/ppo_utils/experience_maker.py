@@ -2027,6 +2027,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 overlong_mask,
                 use_general_reward_for_reason=self.strategy.args.use_general_reward_for_stem,
                 use_rule_based_reward=self.strategy.args.use_rule_based_reward,
+                a = self.strategy.args.a,
+                b = self.strategy.args.b,
             )
             raw_remote_rewards = raw_remote_rewards.to(torch.cuda.current_device())
             
@@ -3347,7 +3349,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         judge_url = self.strategy.args.binary_judge_url
         extractor_url = self.strategy.args.extractor_url
         entropy_rm_url = self.strategy.args.reward_model_url
-        
+        b_mean = kwargs.get("b_mean", 2.898)
         if use_entropy_tree:
             def decode_fn(ids):
                 return self.tokenizer.decode(ids,skip_special_tokens=False)
@@ -3377,6 +3379,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     "average_one_generation": kwargs.get("average_one_generation", False),
                     "advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),
                     "use_weighted_value": kwargs.get("use_weighted_value", False),
+                    "a": kwargs.get("a_coeff", 0.5),
+                    "b": -b_mean,
                 }
             else:
                 args = {
@@ -3402,6 +3406,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     "average_one_generation": kwargs.get("average_one_generation", False),
                     "advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),
                     "use_weighted_value": kwargs.get("use_weighted_value", False),
+                    "a": kwargs.get("a_coeff", 0.5),
+                    "b": -b_mean,
                 }
             print("entropy args:",args)
             system_prompt = kwargs.get("system_prompt",None)
@@ -3412,9 +3418,9 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             system_prompt = kwargs.get("system_prompt",None)
             print("use mcts not entropy")
             if "glm" in self.current_model.lower():
-                args = {"temperature": kwargs.get("temperature", 1.2), "top_p": kwargs.get("top_p", 0.9), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "min_children": 4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_value_only":kwargs.get("use_value_only",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False),"average_one_generation":kwargs.get("average_one_generation",False),"advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),"use_weighted_value": kwargs.get("use_weighted_value", False)}
+                args = {"temperature": kwargs.get("temperature", 1.2), "top_p": kwargs.get("top_p", 0.9), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "min_children": 4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_value_only":kwargs.get("use_value_only",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False),"average_one_generation":kwargs.get("average_one_generation",False),"advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),"use_weighted_value": kwargs.get("use_weighted_value", False),"a": kwargs.get("a_coeff", 0.5),"b": -b_mean}
             else:
-                args = {"temperature": kwargs.get("temperature", 1.2), "top_p": kwargs.get("top_p", 0.9), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "min_children": 4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "qwen", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_value_only":kwargs.get("use_value_only",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False),"average_one_generation":kwargs.get("average_one_generation",False),"advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),"use_weighted_value": kwargs.get("use_weighted_value", False)}
+                args = {"temperature": kwargs.get("temperature", 1.2), "top_p": kwargs.get("top_p", 0.9), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "min_children": 4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "qwen", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_value_only":kwargs.get("use_value_only",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False),"average_one_generation":kwargs.get("average_one_generation",False),"advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),"use_weighted_value": kwargs.get("use_weighted_value", False),"a": kwargs.get("a_coeff", 0.5),"b": -b_mean}
             print("mcts args:",args)
             
             def decode_fn(ids):

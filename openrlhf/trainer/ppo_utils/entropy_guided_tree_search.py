@@ -120,10 +120,10 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
             "evaluator_urls": evaluator_urls,
             "extractor_urls": extractor_urls,
             "eos_tokens": eos_tokens,
-            "use_pure_binary": True,
+            "use_pure_binary": False,
             "entropy_rm_urls": ["http://172.18.73.102:8000/v1"],
             "num_traces": 32,
-            "use_pure_RM" : False,
+            "use_pure_RM" : True,
             "use_orm_reward" : False,
             "use_chain_reward" : False,
             "step_level_norm" : False,
@@ -133,6 +133,8 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
             "average_one_generation" : False,
             "advantage_mix_allancestor" : False,
             "use_weighted_value": False,
+            "a": 0.5,
+            "b": 0.5,
         }
 
         manager = EntropyGuidedChainLocalManager(
@@ -164,7 +166,7 @@ if __name__ == '__main__':
     # MODEL_PATH = "/data/o1-cloud/checkpoints/sft/glm_9b_1102"
 
     # MODEL_PATH = "/data/share/checkpoint/glm-o1-2w-sft"
-    MODEL_PATH = "/workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381"
+    MODEL_PATH = "/data/o1-cloud/checkpoints/rl/qwen-14b-o1/epoch_3"
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_PATH,
         trust_remote_code=True
@@ -229,18 +231,18 @@ if __name__ == '__main__':
     eval_path = "/workspace/lurui/rm_simple_evals/data/math/MATH500.jsonl"
     output_file = "./res/output_8_4_2_2.jsonl"
     # tokenizer_path = "/data/share/checkpoint/glm-o1-2w-sft"
-    tokenizer_path = "/workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381"
+    tokenizer_path = MODEL_PATH
     evaluator_urls = ["http://172.18.74.194:8000/v1"]
-    extractor_urls = ["http://172.18.74.52:8000/v1"]
+    extractor_urls = ["http://172.18.75.153:8000/v1"]
     # eos_tokens = [151329, 151336, 151338]
     eos_tokens = ["<|user|>", "<|endoftext|>", "<|observation|>"]
 
     # Read input data
     with open(eval_path, "r", encoding="utf-8") as f:
-        datas = [json.loads(line) for line in f][0:2]
+        datas = [json.loads(line) for line in f]
 
     # Number of GPUs
-    num_gpus = 2
+    num_gpus = 8
 
     # Split data across GPUs
     data_batches = [datas[i::num_gpus] for i in range(num_gpus)]

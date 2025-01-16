@@ -141,6 +141,7 @@ class CriticModelRayActor(BasePPORole):
                 self.past_global_step = int(exist_dirs[0][len("_critic_ckpt_global_step"):])
 
                 strategy.load_ckpt(self.critic, load_dir=target_dir, load_lr_scheduler_states=True, load_optimizer_states=True, load_module_strict=True)
+                print(f"************** critic loaded ckpt from {target_dir} **************")
             else:
                 print(f"************** failed to load ckpt from {ckpt_path} because no ckpt files found **************")
 

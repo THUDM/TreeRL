@@ -468,6 +468,7 @@ class DeepspeedStrategy(ABC):
             load_lr_scheduler_states=load_lr_scheduler_states,
             load_module_only=load_module_only,
         )
+        print(f"*********** load ckpt from {load_path} ***********")
         if load_path is None:
             raise Exception(f"[deepspeed] failed to resume from checkpoint {load_dir}")
         return load_path, states

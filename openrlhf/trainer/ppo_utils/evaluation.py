@@ -862,7 +862,7 @@ def query_local_vllm_ids_with_logprobs(
     temperature=0.9,
     top_p=0.9,
     min_tokens=0,
-    use_ray=True,
+    use_ray=False,
 ):
     sampling_params = SamplingParams(
         temperature=temperature,

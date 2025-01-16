@@ -1,6 +1,7 @@
 import time
 import math
 from typing import List, Dict, Any, Callable
+import json
 try:
     from openrlhf.trainer.ppo_utils.tree_node import TreeNode, build_into_tree_format
     from openrlhf.trainer.ppo_utils.parallel_mcts import gather_paths
@@ -105,7 +106,11 @@ class EntropyGuidedChainLocalManager:
         )
 
         if args["use_pure_RM"]:
-            a, b = 0.5, -2.898
+            # with open("/workspace/lurui/openrlhf-mcts/data/rewards.jsonl", "a") as f:
+            #     f.write(json.dumps({"reward": value}) + "\n")
+            # a, b = 0.5, -2.898
+            a = args.get("a", 0.5)
+            b = args.get("b", -2.898)
             x = a * (value - b)
             final_score = 1 / (1 + math.exp(-x))
         else:

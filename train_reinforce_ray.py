@@ -326,6 +326,8 @@ if __name__ == "__main__":
     parser.add_argument("--n", type=int, default=4)
     parser.add_argument("--l", type=int, default=2)
     parser.add_argument("--t", type=int, default=2)
+    parser.add_argument("--a_coeff", type=float, default=0.5)
+    parser.add_argument("--b_mean", type=float, default=2.898)
     
     parser.add_argument("--binary_judge_url", type=str, default=None)
     parser.add_argument("--reward_model_url", type=str, default=None)

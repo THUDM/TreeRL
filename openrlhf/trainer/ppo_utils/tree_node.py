@@ -323,9 +323,9 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
             for leaf in selected_terminals:
                 selected_backpropagate(leaf)
             compute_weighted_update(root)
-        with open("/workspace/lurui/openrlhf-mcts/data/entropy_tree_local.jsonl","a") as f:
-            f.write(json.dumps(convert_to_json(root)))
-            f.write("\n")
+        # with open("/workspace/lurui/openrlhf-mcts/data/entropy_tree_local.jsonl","a") as f:
+        #     f.write(json.dumps(convert_to_json(root)))
+        #     f.write("\n")
         
         return root, selected_terminals
     except Exception as e:

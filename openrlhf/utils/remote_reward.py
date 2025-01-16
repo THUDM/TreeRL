@@ -283,7 +283,9 @@ def get_stem_eval(
     is_overlong=False,
     tokenizer=None,
     use_rule_based_reward=False,
-    use_general_reward_for_reason=False
+    use_general_reward_for_reason=False,
+    a = 0.5,
+    b = -2.898,
 ):
     remote_stem_urls = remote_urls["math_checker"]
     
@@ -309,8 +311,7 @@ def get_stem_eval(
         import math
         remote_model_urls = remote_urls["math_RM"]
         _rm_based_reward = get_qwen_remote_reward_model_value(remote_model_urls, query, response)
-        a = 0.5
-        b = -2.898
+        print("a_coeff:", a,"b_mean:", b)
         x = a*(_rm_based_reward-b)
         result = 1/(1+math.exp(-x))
         print("use pure rm-sigmoid in chain", result)
@@ -339,6 +340,8 @@ def query_remote_reward_single_worker(
     use_rule_based_reward,
     use_general_reward_for_reason,
     query,
+    a,
+    b,
 ):   
     QUESTOIN_KEY = "prompt"
     RESPONSE_KEY = "response"
@@ -372,7 +375,9 @@ def query_remote_reward_single_worker(
             is_overlong=is_overlong,
             tokenizer=tokenizer,
             use_general_reward_for_reason=use_general_reward_for_reason,
-            use_rule_based_reward=use_rule_based_reward
+            use_rule_based_reward=use_rule_based_reward,
+            a = a,
+            b = b,
         )
     elif source in ("code"):
         result, binary_result, extracted_answer = get_code_eval(query, urls)
@@ -395,7 +400,9 @@ def get_remote_reward_entry(
     tokenizer,
     overlong_mask,
     use_general_reward_for_reason=False,
-    use_rule_based_reward=False
+    use_rule_based_reward=False,
+    a = 0.5,
+    b = -2.898,
 ):
     assert isinstance(urls, dict), f"urls must be a dict, found: {type(urls)}"
     # if isinstance(urls, str):
@@ -414,6 +421,8 @@ def get_remote_reward_entry(
             tokenizer, 
             use_rule_based_reward, 
             use_general_reward_for_reason,
+            a,
+            b,
             ), 
         queries, 
         num_threads=8
