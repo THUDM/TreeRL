@@ -861,7 +861,8 @@ def query_local_vllm_ids_with_logprobs(
     stops=None,
     temperature=0.9,
     top_p=0.9,
-    min_tokens=0
+    min_tokens=0,
+    use_ray=True,
 ):
     sampling_params = SamplingParams(
         temperature=temperature,
@@ -882,18 +883,23 @@ def query_local_vllm_ids_with_logprobs(
 
     for try_counter in range(RETRY_COUNT):
         try:
-            try:
+            # try:
+            if use_ray:
                 outputs = ray.get(llm.generate.remote(
                     prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
-            except:
-                # continue
-                # print("ray.get error")
-                if LOCAL_TEST:
-                    outputs = llm.generate(
-                        prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
-                    )
-                else:
-                    continue
+            else:
+                outputs = llm.generate(
+                    prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
+                )
+            # except:
+            #     # continue
+            #     # print("ray.get error")
+            #     if LOCAL_TEST:
+            #         outputs = llm.generate(
+            #             prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
+            #         )
+            #     else:
+            #         continue
 
             for output in outputs:
                 assert len(output.outputs) == 1
