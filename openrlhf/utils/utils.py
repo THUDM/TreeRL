@@ -421,7 +421,7 @@ def check_result(urls, item):
     else:
         response = response.strip().split("\n")
         resp_text = [x for x in response if x.strip()]
-        resp_text = "\n".join(resp_text[-3:])    
+        resp_text = "\n".join(resp_text[-5:])    
 
     # response = response.strip().split("\n")
     # resp_text = [x for x in response if x.strip()]

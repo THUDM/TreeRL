@@ -339,10 +339,12 @@ def query_remote_reward_single_worker(
     tokenizer, 
     use_rule_based_reward,
     use_general_reward_for_reason,
-    query,
     a,
     b,
+    query,
 ):   
+    # print("a",a,"b",b,"query",query)
+    assert isinstance(query, dict), f"elements of queries must be dict, found {query},{a},{b}"
     QUESTOIN_KEY = "prompt"
     RESPONSE_KEY = "response"
     LABEL_KEY = "label"

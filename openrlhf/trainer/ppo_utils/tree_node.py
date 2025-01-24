@@ -35,7 +35,8 @@ class TreeNode:
         parent_node_idx: Optional[int] = None,
         parent_node_split_idx: Optional[int] = None,
         child_nodes: Optional[List['TreeNode']] = None,
-        child_split_indices: Optional[List[int]] = None
+        child_split_indices: Optional[List[int]] = None,
+        max_length: int = 7144,
     ):
         """
         树节点的信息
@@ -85,6 +86,18 @@ class TreeNode:
 
         # --- 掩码信息 ---
         self.mask: List[bool] = [False] * len(self.token_str_list)
+        
+        # 检查是否超过最大长度
+        total_length = len(self.aggregate_token_ids) + len(self.token_id_list)
+        if total_length > max_length:
+            # 计算需要 mask 的 token 数量
+            tokens_to_mask = total_length - max_length
+            # 从后往前 mask 掉超出长度的 tokens
+            for i in range(max(0, len(self.mask) - tokens_to_mask), len(self.mask)):
+                self.mask[i] = True
+            self.is_end = True
+        
+        # 检查特殊token
         for i, token_str in enumerate(self.token_str_list):
             if "conclusion" in token_str.lower() or "answer" in token_str.lower():
                 # 掩盖后续 tokens
@@ -184,7 +197,7 @@ class TreeNode:
 
         return result
 
-def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,average_one_generation=False,use_weighted_value=False) -> MCTSNode:
+def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,average_one_generation=False,use_weighted_value=False,use_all_terminals = False) -> MCTSNode:
     # from IPython import embed
     # embed()
     all_leaves = []
@@ -317,7 +330,11 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
                 root.children.append(build_tree_node(decode_fn,tree_list[0], root))
         
         leaf_normalize(all_leaves,root,average_one_generation)
-        selected_terminals = select_terminal(all_leaves,num_traces,balance_ratio)
+        if use_all_terminals:
+            print("use all terminals into training")
+            selected_terminals = all_leaves
+        else:
+            selected_terminals = select_terminal(all_leaves,num_traces,balance_ratio)
         if use_weighted_value:
             print("weighted value")
             for leaf in selected_terminals:

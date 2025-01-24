@@ -35,6 +35,27 @@ def _validate_args(args):
     ) == 0, f"actor_world_size must be power of 2, got {actor_world_size}"
     assert args.zero_stage != 3 or args.vllm_num_engines > 0, f"ZeRO-3 is only supported when vLLM enabled"
 
+    if args.resume:
+        # 检测 args.save_path 有没有 _actor_global_step，如果有的话，就取最大的
+        import os
+        all_list_file = os.listdir(args.save_path)
+        if any("_actor_global_step" in file for file in all_list_file):
+            args.pretrain = args.save_path
+            args.reward_pretrain = args.pretrain
+        
+        if "_actor_global_step" not in args.pretrain:
+            step_paths = [path for path in os.listdir(args.pretrain) if os.path.isdir(os.path.join(args.pretrain, path)) and any(file.endswith('.safetensors') for file in os.listdir(os.path.join(args.pretrain, path)))] 
+            if step_paths:
+                max_step_path = max(step_paths, key=lambda x: int(x.split('_actor_global_step')[1]))
+                latest_path = os.path.join(args.pretrain, max_step_path)
+                print(f"Resuming from {args.pretrain}")
+                args.pretrain = latest_path
+                args.reward_pretrain = args.pretrain
+            else:
+                print("No directories containing *.safetensors found in the directory.")
+        
+        # for _ in range(1000):
+        #     print("Resuming from", args.pretrain)
 
 def train(args):
     _validate_args(args)
@@ -321,7 +342,9 @@ if __name__ == "__main__":
     parser.add_argument("--advantage_mix_allancestor", action="store_true", default=False)
     parser.add_argument("--use_weighted_value", action="store_true", default=False)
     parser.add_argument("--correct_bonus_ratio", type=float, default=1)
+    parser.add_argument("--correct_bonus_threshold", type=float, default=0.1)
     parser.add_argument("--balance_ratio", type=float, default=0)
+    parser.add_argument("--use_all_terminals", action="store_true", default=False)
     parser.add_argument("--m", type=int, default=8)
     parser.add_argument("--n", type=int, default=4)
     parser.add_argument("--l", type=int, default=2)
@@ -334,6 +357,7 @@ if __name__ == "__main__":
     parser.add_argument("--extractor_url", type=str, default=None)
     
     parser.add_argument("--wandb_id", type=str, default=None)
+    parser.add_argument("--resume", action="store_true", default=False)
  
     args = parser.parse_args()
     train(args)

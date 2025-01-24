@@ -2027,8 +2027,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 overlong_mask,
                 use_general_reward_for_reason=self.strategy.args.use_general_reward_for_stem,
                 use_rule_based_reward=self.strategy.args.use_rule_based_reward,
-                a = self.strategy.args.a,
-                b = self.strategy.args.b,
+                a = self.strategy.args.a_coeff,
+                b = self.strategy.args.b_mean,
             )
             raw_remote_rewards = raw_remote_rewards.to(torch.cuda.current_device())
             
@@ -2145,7 +2145,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             # mask 掉重复的样本
             r_min = r.min().item()
             print("repeated_mask",repeated_mask.shape,"r",r.shape)
-            r[repeated_mask == 0] = r_min - 1
+            # r[repeated_mask == 0] = r_min - 1
+            r[repeated_mask == 0] = -1
             # mask 掉 entropy 过大的样本
             # response_entropy = -(action_log_probs * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
             # print("response_entropy and action_log_probs",response_entropy.shape,action_log_probs.shape,response_entropy)
@@ -2176,10 +2177,12 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 pass_at_1 = pass_at_1.repeat(batch_size * num_trace_per_sample)[:batch_size * num_trace_per_sample]
                 
                 # 所有 binary_reward 大于0的地方，都乘一个 self.strategy.args.correct_bonus_ratio
-                indices = torch.nonzero(judge_rwd > 0, as_tuple=True)[0]
-                print("correct_indices",indices)
-                # 对满足条件的位置的 r 进行调整
-                r[indices] *= self.strategy.args.correct_bonus_ratio
+                bonus_threshold = self.strategy.args.correct_bonus_threshold
+                print("bonus_threshold",bonus_threshold,"pass_at_1",pass_at_1)
+                if pass_at_1[0] < bonus_threshold:
+                    indices = torch.nonzero(judge_rwd > 0, as_tuple=True)[0]
+                    # 对满足条件的位置的 r 进行调整
+                    r[indices] *= self.strategy.args.correct_bonus_ratio
 
                 if self.strategy.args.mask_pass_confident_samples:
                     sample_pass_rate = (judge_rwd > margin).float().sum(1) / judge_rwd.shape[1]
@@ -2330,21 +2333,16 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                             question, answer = extract_qa_for_glm(item)
                             queries[i] = (question, answer)
                             new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
-                            # os.makedirs(os.path.dirname(file_name), exist_ok=True)
-                            # with open(file_name, "a") as f:
-                            #     f.write(json.dumps(new_data) + "\n")
-                            # with open("/workspace/lurui/openrlhf-glm/logs/outputs/queries.jsonl", "a") as f:
-                            #     f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"tree"}) + "\n")
-                            # print(question,answer)
+                            os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            with open(file_name, "a") as f:
+                                f.write(json.dumps(new_data) + "\n")
                         else:
                             question, answer = extract_qa_for_qwen(item)
                             queries[i] = (question, answer)
                             new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
-                            # os.makedirs(os.path.dirname(file_name), exist_ok=True)
-                            # with open(file_name, "a") as f:
-                                # f.write(json.dumps(new_data) + "\n")
-                            # with open("/workspace/lurui/openrlhf-glm/logs/outputs/queries.jsonl", "a") as f:
-                            #     f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"tree"}) + "\n")
+                            os.makedirs(os.path.dirname(file_name), exist_ok=True)
+                            with open(file_name, "a") as f:
+                                f.write(json.dumps(new_data) + "\n")
                             # raise NotImplementedError
                     assert len(queries) == len(micro_labels), f"query={len(queries)}, labels={len(labels)}"
                     # r_refs.append((queries, micro_labels))
@@ -2547,10 +2545,11 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 
         if self.strategy.args.mask_repeated_samples:
             # r = r * repeated_mask
-            r_min = r.min().item()
-            print("repeated_mask",repeated_mask.shape,"r",r.shape)
-            r[repeated_mask == 0] = r_min - 1
-            
+            # r_min = r.min().item()
+            print("repeated_mask", repeated_mask.shape,"r", r.shape)
+            # r[repeated_mask == 0] = max(-1, r_min - 1)
+            r[repeated_mask == 0] = -1
+
             # response_entropy = -(action_log_probs * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
             # print("response_entropy and action_log_probs",response_entropy.shape,action_log_probs.shape,response_entropy)
             # entropy_mask_threshold = generate_kwargs.get("entropy_mask_threshold", 1)
@@ -3363,6 +3362,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     # 新增参数
                     "t": kwargs.get("t", 1),
                     "l": kwargs.get("l", 2),
+                    "generate_max_len": self.strategy.args.generate_max_len,
                     "evaluator_urls": [judge_url],
                     "extractor_urls": [extractor_url],
                     "entropy_rm_urls": [entropy_rm_url],
@@ -3379,6 +3379,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     "average_one_generation": kwargs.get("average_one_generation", False),
                     "advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),
                     "use_weighted_value": kwargs.get("use_weighted_value", False),
+                    "use_all_terminals": kwargs.get("use_all_terminals", False),
                     "a": kwargs.get("a_coeff", 0.5),
                     "b": -b_mean,
                 }
@@ -3390,6 +3391,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     "n": kwargs.get("n", 4),
                     "l": kwargs.get("l", 2),
                     "t": kwargs.get("t", 1),
+                    "generate_max_len": self.strategy.args.generate_max_len,
                     "evaluator_urls": [judge_url],
                     "extractor_urls": [extractor_url],
                     "entropy_rm_urls": [entropy_rm_url],
@@ -3406,6 +3408,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     "average_one_generation": kwargs.get("average_one_generation", False),
                     "advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),
                     "use_weighted_value": kwargs.get("use_weighted_value", False),
+                    "use_all_terminals": kwargs.get("use_all_terminals", False),
                     "a": kwargs.get("a_coeff", 0.5),
                     "b": -b_mean,
                 }
@@ -3418,9 +3421,21 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             system_prompt = kwargs.get("system_prompt",None)
             print("use mcts not entropy")
             if "glm" in self.current_model.lower():
-                args = {"temperature": kwargs.get("temperature", 1.2), "top_p": kwargs.get("top_p", 0.9), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "min_children": 4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_value_only":kwargs.get("use_value_only",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False),"average_one_generation":kwargs.get("average_one_generation",False),"advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),"use_weighted_value": kwargs.get("use_weighted_value", False),"a": kwargs.get("a_coeff", 0.5),"b": -b_mean}
+                args = {"temperature": kwargs.get("temperature", 1.2), "top_p": kwargs.get("top_p", 0.9), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "min_children": 4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_value_only":kwargs.get("use_value_only",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False),"average_one_generation":kwargs.get("average_one_generation",False),"advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),"use_weighted_value": kwargs.get("use_weighted_value", False),"a": kwargs.get("a_coeff", 0.5),"b": -b_mean,"use_all_terminals":kwargs.get("use_all_terminals", False)}
             else:
-                args = {"temperature": kwargs.get("temperature", 1.2), "top_p": kwargs.get("top_p", 0.9), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "min_children": 4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "qwen", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_value_only":kwargs.get("use_value_only",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False),"average_one_generation":kwargs.get("average_one_generation",False),"advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),"use_weighted_value": kwargs.get("use_weighted_value", False),"a": kwargs.get("a_coeff", 0.5),"b": -b_mean}
+                args = {
+                    "temperature": kwargs.get("temperature", 1.2), 
+                    "top_p": kwargs.get("top_p", 0.9), 
+                    "max_depth": 40, 
+                    "max_nodes": kwargs.get("max_nodes", 256), 
+                    "max_children": 4, 
+                    "min_children": 4, 
+                    "shallow_enwide":False,
+                    "exploration_constant": 0.5, 
+                    "prompt_key": "problem", 
+                    "answer_key": "golden_answer", 
+                    "backbone": "qwen", "pass_k": num_trace_per_sample, 
+                    "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_value_only":kwargs.get("use_value_only",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False),"average_one_generation":kwargs.get("average_one_generation",False),"advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),"use_weighted_value": kwargs.get("use_weighted_value", False),"a": kwargs.get("a_coeff", 0.5),"b": -b_mean,"use_all_terminals":kwargs.get("use_all_terminals", False)}
             print("mcts args:",args)
             
             def decode_fn(ids):
@@ -3428,17 +3443,18 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
 
             paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, decode_fn, args,system_prompt=system_prompt)
         assert paths is not None, f"paths is None, prompts: {prompts}"
-        print("paths:",paths)
-        os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs",exist_ok=True)
-        with open("/workspace/lurui/openrlhf-glm/logs/outputs/treepath_entropy_new.jsonl", "a") as f:
-            # f.write(json.dumps({"paths":paths,"problem":prompts[0]}) + "\n")
-            paths_log = []
-            for p in paths:
-                p_log = []
-                for node in p:
-                    p_log.append({"value":node["value"],"state_value":node["state_value"],"pass_ratio":node["pass_ratio"]})
-                paths_log.append(p_log)
-            f.write(json.dumps({"paths":paths_log}) + "\n")
+        # print("paths:",paths)
+
+        # os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs",exist_ok=True)
+        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/treepath_entropy_new.jsonl", "a") as f:
+        #     # f.write(json.dumps({"paths":paths,"problem":prompts[0]}) + "\n")
+        #     paths_log = []
+        #     for p in paths:
+        #         p_log = []
+        #         for node in p:
+        #             p_log.append({"value":node["value"],"state_value":node["state_value"],"pass_ratio":node["pass_ratio"]})
+        #         paths_log.append(p_log)
+        #     f.write(json.dumps({"paths":paths_log}) + "\n")
             
         # NOTE: concat all outputs to following format:
         #
@@ -3451,6 +3467,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         for path in paths:
             output_token_ids = sum([len(x["token_answer"]) for x in path])
             max_output_len = max(max_output_len, output_token_ids)
+        max_output_len = min(max_output_len, self.strategy.args.generate_max_len)
 
         print(f"************ found max_output_tokens: {max_output_len}, max_input_len: {max_input_len} *********")
         pad_token_id = self.tokenizer.pad_token_id
@@ -3469,6 +3486,10 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 reward = path[i]["value"]
                 # print("pass_ratio",path[i]["pass_ratio"])
                 rewards += [reward] * len(path[i]["token_answer"])
+            if len(output_token_ids) > max_output_len:
+                print("cut output_token_ids",len(output_token_ids),max_output_len)
+                output_token_ids = output_token_ids[:max_output_len]
+                rewards = rewards[:max_output_len]
             output_len = len(output_token_ids)
             output_ids = output_token_ids + [pad_token_id] * (max_output_len - len(output_token_ids))
             rewards += [0] * (max_output_len - len(output_token_ids))
@@ -3482,13 +3503,20 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 # correct_terminal += 1
                 correct_terminal_count += 1
                 correct_terminal = 1
-                # rewards 整体乘一个 coeff
-                print("correct_bonus_ratio",self.strategy.args.correct_bonus_ratio)
-                rewards = [r * self.strategy.args.correct_bonus_ratio for r in rewards]
+                # # rewards 整体乘一个 coeff
+                # print("correct_bonus_ratio",self.strategy.args.correct_bonus_ratio)
+                # rewards = [r * self.strategy.args.correct_bonus_ratio for r in rewards]
             seq_rewards.append(rewards)
-
+        # 如果correct_terminal_count/total_terminals <0.1，那么所有正确的 terminal 都乘一个 coeff
+        bonus_threshold = self.strategy.args.correct_bonus_threshold
+        print("bonus_threshold",bonus_threshold,"pass_at_1",correct_terminal_count/total_terminals)
+        if correct_terminal_count/total_terminals < bonus_threshold:
+            for i in range(len(paths)):
+                if paths[i][-1]["pass_ratio"] == 1:
+                    seq_rewards[i] = [r * self.strategy.args.correct_bonus_ratio for r in seq_rewards[i]]
         sequences = torch.tensor(sequences)
         seq_rewards = torch.tensor(seq_rewards).float()
+        # assert seq_rewards.shape == sequences.shape, f"seq_rewards: {seq_rewards.shape}, sequences: {sequences.shape}"
         sequences, attention_mask, action_mask = self.actor.process_sequences(
             sequences, max_input_len, eos_token_id, pad_token_id
         )

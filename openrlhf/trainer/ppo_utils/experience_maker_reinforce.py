@@ -262,6 +262,7 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
                 kl_as_reward=True,
                 process_reward=self.strategy.args.process_supervision
             )
+        print("final kl shape",kl.shape,"final sequence shape",experiences["sequences"].shape)
         # sample_kl = (kl.abs() * action_mask).sum(1) / action_mask.sum(1)
         # sample_kl_mask = (sample_kl <= 0.3).view(-1, 1).float()
         # reward = reward * sample_kl_mask

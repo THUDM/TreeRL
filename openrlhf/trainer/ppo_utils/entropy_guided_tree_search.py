@@ -133,6 +133,7 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
             "average_one_generation" : False,
             "advantage_mix_allancestor" : False,
             "use_weighted_value": False,
+            "use_all_terminals": False,
             "a": 0.5,
             "b": 0.5,
         }

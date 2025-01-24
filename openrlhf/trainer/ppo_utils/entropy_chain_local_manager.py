@@ -111,6 +111,7 @@ class EntropyGuidedChainLocalManager:
             # a, b = 0.5, -2.898
             a = args.get("a", 0.5)
             b = args.get("b", -2.898)
+            print("rm_sore a", a, "b",b)
             x = a * (value - b)
             final_score = 1 / (1 + math.exp(-x))
         else:
@@ -156,7 +157,6 @@ class EntropyGuidedChainLocalManager:
         answer_str: str,
         args: Dict[str, Any] = None,
         system_prompt=None,
-        max_length=7144,
     ) -> Dict[str, Any]:
         """
         熵引导的链式推理。
@@ -173,12 +173,13 @@ class EntropyGuidedChainLocalManager:
         N = self.args["n"]
         L = self.args["l"]
         T = self.args['t']
+        max_length = args["generate_max_len"]
 
         init_prompt_ids_with_template = self.encode_fn(
             [[problem_str], [None]], 1024, device="cpu", system_prompt=system_prompt
         )["input_ids"][0].tolist()
 
-        print(init_prompt_ids_with_template)
+        # print(init_prompt_ids_with_template)
 
         paths = self.paths
 
@@ -215,7 +216,8 @@ class EntropyGuidedChainLocalManager:
                 token_id_list=content_token_ids,
                 log_prob_list=log_probs,
                 is_end=True,
-                finish_reason=finish_reason
+                finish_reason=finish_reason,
+                max_length=max_length
             )
             self.tree_lists.append([root_node])
 
@@ -357,7 +359,7 @@ class EntropyGuidedChainLocalManager:
         paths['tree_structures'] = [
             self.serialize_tree_list(tree_list) for tree_list in self.tree_lists
         ]
-        root, selected_terminals = build_into_tree_format(self.tree_lists,self.decode_fn,args['num_traces'],args["balance_ratio"],args["average_one_generation"],use_weighted_value = args["use_weighted_value"])
+        root, selected_terminals = build_into_tree_format(self.tree_lists,self.decode_fn,args['num_traces'],args["balance_ratio"],args["average_one_generation"],use_weighted_value = args["use_weighted_value"],use_all_terminals = args["use_all_terminals"])
         paths = gather_paths(
             root = root,
             selected_terminals = selected_terminals,

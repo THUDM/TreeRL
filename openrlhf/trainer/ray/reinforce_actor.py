@@ -359,13 +359,14 @@ class ActorModelRayActor(BasePPORole):
             advantage_mix_allancestor = args.advantage_mix_allancestor,
             use_weighted_value = args.use_weighted_value,
             balance_ratio = args.balance_ratio,
+            use_all_terminals = args.use_all_terminals,
             m = args.m,
             n = args.n,
             l = args.l,
             t = args.t,
             system_prompt = args.system_prompt,
             a_coeff = args.a_coeff,
-            b_coeff = args.b_coeff,
+            b_mean = args.b_mean,
         )
 
         trainer.fit(self.prompts_dataloader, self.pretrain_dataloader, args)

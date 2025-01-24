@@ -113,9 +113,11 @@ def create_vllm_engines(
                 trust_remote_code=True,
                 tensor_parallel_size=tensor_parallel_size,
                 dtype="bfloat16",
-                gpu_memory_utilization=0.7,
+                gpu_memory_utilization=0.9,
+                max_num_batched_tokens=300000,
                 # gpu_memory_utilization=0.85,
                 seed=int(seed) + _,
+                max_model_len=23856,
                 enable_prefix_caching=enable_prefix_caching,
                 enforce_eager=True
             )
