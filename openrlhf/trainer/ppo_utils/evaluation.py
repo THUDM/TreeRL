@@ -240,7 +240,6 @@ def query_sglang_chat(
 
             api_base = random.choice(urls)
             url = api_base + "/chat/completions"
-            print("url: ", url)
             response = requests.post(
                 url,
                 json=request_data,
@@ -271,12 +270,13 @@ def query_sglang_chat(
 
     return None
 
-
 def extract_answer(
     question,
     response,
     qwen_urls,
 ):
+    # response = response.split("</think>")[-1].strip()
+    response = response[-2048:]  # only keep the last 2048 characters
     # resp_url = "http://172.19.192.137:9090/v1/chat/completions"
     response = response.strip().split('\n')
     # response = [x for x in response if x]
@@ -298,6 +298,11 @@ def extract_answer(
         # if "<answer>" in resp_text:
         # resp_text = resp_text.replace("<answer>", "").strip()
         # answer =
+        print("view qwen urls", qwen_urls)
+        if not qwen_urls[0]:
+            print("disable extractor")
+            return ""
+        print("enable extractor")
         answer_template = EXTRACTION_TEMPLATE.format(
             question=question, answer=resp_text)
         for _ in range(6):
@@ -308,6 +313,7 @@ def extract_answer(
             #     extracted_answer = query_chatglm_platform(
             #         answer_template, url=url
             #         )
+            print("call from extract", qwen_urls)
             extracted_answer = query_sglang_chat(
                 prompt=answer_template, urls=qwen_urls, temperature=0.0, top_p=0.5)
             if extracted_answer is None:
@@ -322,7 +328,8 @@ def extract_answer(
 
 def check_equality(expr1: str, expr2: str, urls):
     prompt = EQUALITY_TEMPLATE % {"expression1": expr1, "expression2": expr2}
-    for _ in range(10):
+    for _ in range(3):
+        print("call from check", urls)
         response = query_sglang_chat(prompt, urls)
         if response and len(response) == 0:
             continue
@@ -341,10 +348,12 @@ def check_result(
     checker_urls,
     extractor_urls,
 ):
-    if response == "":
+    if response == "" or label == "":
+        if label == "":
+            print("dummy label")
         return None, 0
     answer = extract_answer(question, response, extractor_urls)
-    if answer is None:
+    if not answer:
         return None, 0
     check = check_equality(answer, label, urls=checker_urls)
     print("===", check, "===", answer, label)
@@ -604,13 +613,17 @@ def generate_logits(urls, user_query, assistant_response):
 
     response = send_request(user_query, assistant_response)
     return parse_response(response)
-# print(generate_logits(["http://172.18.71.87:8000/v1"], "What is the value of $x$ in the equation $2x + 3 = 7$?", "The value of $x$ in the equation $2x + 3 = 7$ is $x = 2$."))
+
+## math-RM
 
 # def apply_chat_template_qwen(system_prompt, user, assistant):
-#     return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>\n"
+#     return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>"
 
 
 # def get_qwen_remote_reward_model_value(urls, question, response):
+#     # global count
+#     # count +=1
+#     # print(count)
 #     url = random.choice(urls)
 #     # print(url)
 
@@ -619,70 +632,54 @@ def generate_logits(urls, user_query, assistant_response):
 #         base_url=url,
 #     )
 
-#     system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
-#     if len(question) + len(response) > 8192:
-#         response = response[:8192 - len(question)]
+#     system_prompt = "Please reason step by step."
+#     # if len(question) + len(response) > 4096:
+#     #     response = response[:4096 - len(question)]
 
-#     conversation_str = apply_chat_template_qwen(system_prompt, question, response)
+#     conversation_str = apply_chat_template_qwen(
+#         system_prompt, question, response)
 #     # print(conversation_str)
 
 #     for _ in range(3):
 #         try:
-#         # if True:
+#             # if True:
 #             responses = client.embeddings.create(
 #                 input=[conversation_str],
 #                 model="Qwen72BRM",
 #             )
 
 #             for data in responses.data:
-#                 a = 5
-#                 b = 2
-#                 result = 1/(1+a**(-float(data.embedding[-1])/b))
-#                 return result
+#                 # print("qwen rm data", float(data.embedding[-1]))
+#                 return float(data.embedding[-1])
 #         except Exception as e:
 #             print(e)
 #             print("-- error in rm requests", url)
 #             continue
-#     return -10
+#     return 0
+
+# general-math-code-RM
+import random
+import requests
 
 def apply_chat_template_qwen(system_prompt, user, assistant):
-    return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>"
-
+    return f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>"
 
 def get_qwen_remote_reward_model_value(urls, question, response):
-    # global count
-    # count +=1
-    # print(count)
     url = random.choice(urls)
-    # print(url)
-
-    client = OpenAI(
-        api_key="EMPTY",
-        base_url=url,
-    )
-
-    system_prompt = "Please reason step by step."
-    # if len(question) + len(response) > 4096:
-    #     response = response[:4096 - len(question)]
-
-    conversation_str = apply_chat_template_qwen(
-        system_prompt, question, response)
-    # print(conversation_str)
-
+    system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
+    prompt = apply_chat_template_qwen(system_prompt, question, response)
+    
     for _ in range(3):
         try:
-            # if True:
-            responses = client.embeddings.create(
-                input=[conversation_str],
-                model="Qwen72BRM",
-            )
+            data = {"model": "Qwen72BRM", "text": [prompt]}
 
-            for data in responses.data:
-                # print("qwen rm data", float(data.embedding[-1]))
-                return float(data.embedding[-1])
+            responses = requests.post(url, json=data).json()
+            for response in responses:
+                return response['embedding'][0]
+            
         except Exception as e:
-            print(e)
-            print("-- error in rm requests", url)
+            # print(e)
+            print(e, "-- error in rm requests", url,response,data)
             continue
     return 0
 
@@ -934,3 +931,6 @@ def query_local_vllm_ids_with_logprobs(
             time.sleep(sleep_time)
 
     return None, None, None, None, None
+
+# if __name__ == "__main__":
+#     query_sglang_chat("who are you?", urls=["http://)

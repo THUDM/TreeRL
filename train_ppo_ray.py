@@ -380,6 +380,7 @@ if __name__ == "__main__":
     parser.add_argument("--normalize_reward_from_multi_traces_with_rloo", action="store_true", default=False)
     parser.add_argument("--normalize_reward_mean_only", action="store_true", default=False)
     parser.add_argument("--mask_repeated_samples", action="store_true", default=False)
+    parser.add_argument("--inner_repetition_penalty", action="store_true", default=False)
     parser.add_argument("--use_rule_based_reward", action="store_true", default=False)
     parser.add_argument("--mask_pass_confident_samples", action="store_true", default=False)
     parser.add_argument("--use_random_top_k_logits_sampling", action="store_true", default=False)

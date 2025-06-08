@@ -111,9 +111,11 @@ class EntropyGuidedChainLocalManager:
             # a, b = 0.5, -2.898
             a = args.get("a", 0.5)
             b = args.get("b", -2.898)
-            print("rm_sore a", a, "b",b)
+            print("rm_sore a", a, "b", b)
             x = a * (value - b)
             final_score = 1 / (1 + math.exp(-x))
+            if self.answer_str == "" :
+                binary_score = final_score
         else:
             sigmoid_value = 1 / (1 + math.exp(-value))
             final_score = binary_score + 0.5 * sigmoid_value
@@ -206,7 +208,6 @@ class EntropyGuidedChainLocalManager:
             if initial_results is None or initial_results[0] is None:
                 continue
             break
-        
 
         for idx, (content_token_ids, _, finish_reason, _, log_probs) in enumerate(zip(*initial_results)):
             root_node = TreeNode(
@@ -231,8 +232,16 @@ class EntropyGuidedChainLocalManager:
                 # 先在每个 Node 中取出 top-N 节点
                 tree_entropy_tokens = []
                 for node_idx, node in enumerate(tree_list):
-                    if not all(node.mask):  # 节点未被完全mask
-                        entropy_tokens = node.get_max_entropy_tokens(top_n=N)
+                    if not all(node.mask):  # 节点未被完全 mask
+                        # assert self.args['use_diverse_sampling'], f"not use_diverse_sampling"
+                        # assert self.args['diverse_upsampling'] == 5, f"not use_diverse_sampling"
+                        if self.args['use_diverse_sampling']:
+                            entropy_tokens = node.get_max_entropy_tokens(
+                                top_n=N * self.args['diverse_upsampling']
+                            )
+                        else:
+                            entropy_tokens = node.get_max_entropy_tokens(
+                                top_n=N)
                         for token_idx in entropy_tokens:
                             # 存储 (熵值, tree_idx, node_idx, node, token_idx)
                             entropy_value = - \
@@ -245,10 +254,38 @@ class EntropyGuidedChainLocalManager:
                 # 因为是同一道题目的，所以不需要考虑跨题目的熵值
                 # 从中选择 top-N 个节点作为扩展任务
                 tree_entropy_tokens.sort(reverse=True)  # 按熵值降序排序
-                expansion_tasks.extend([
-                    (tree_idx, node_idx, node, token_idx)
-                    for _, tree_idx, node_idx, node, token_idx in tree_entropy_tokens[:N]
-                ])
+
+                if self.args['use_diverse_sampling']:
+                    # 获取 top-(ratio*N) 的候选 token
+                    token_indices = [token_idx for _, _,
+                                     _, _, token_idx in tree_entropy_tokens]
+                    scores = [entropy_value for entropy_value,
+                              _, _, _, _ in tree_entropy_tokens]
+
+                    # 使用分散采样选择最终的 token
+                    selected_indices = self.select_diverse_tokens(
+                        token_indices,
+                        scores,
+                        N,
+                    )
+
+                    # 将选中的 token 添加到扩展任务中
+                    selected_tokens = []
+                    for token_idx in selected_indices:
+                        for item in tree_entropy_tokens:
+                            if item[4] == token_idx:  # item[4] 是 token_idx
+                                selected_tokens.append(item)
+                                break
+
+                    expansion_tasks.extend([
+                        (tree_idx, node_idx, node, token_idx)
+                        for _, tree_idx, node_idx, node, token_idx in selected_tokens
+                    ])
+                else:
+                    expansion_tasks.extend([
+                        (tree_idx, node_idx, node, token_idx)
+                        for _, tree_idx, node_idx, node, token_idx in tree_entropy_tokens[:N]
+                    ])
 
             if not expansion_tasks:
                 print("没有可扩展的节点，提前终止迭代。")
@@ -345,8 +382,8 @@ class EntropyGuidedChainLocalManager:
         # 以上为串行评估，以下为并发评估
         eval_time_start = time.time()
         paths['pass_k_result'] = self.evaluate_trees(
-            problem_str, 
-            answer_str, 
+            problem_str,
+            answer_str,
             args
         )
         paths['eval_time_use'] = time.time() - eval_time_start
@@ -359,19 +396,32 @@ class EntropyGuidedChainLocalManager:
         paths['tree_structures'] = [
             self.serialize_tree_list(tree_list) for tree_list in self.tree_lists
         ]
-        root, selected_terminals = build_into_tree_format(self.tree_lists,self.decode_fn,args['num_traces'],args["balance_ratio"],args["average_one_generation"],use_weighted_value = args["use_weighted_value"],use_all_terminals = args["use_all_terminals"])
-        paths = gather_paths(
-            root = root,
-            selected_terminals = selected_terminals,
-            pass_k = args['num_traces'],
-            use_orm_reward = args['use_orm_reward'],
-            use_chain_reward = args["use_chain_reward"],
-            step_level_norm = args["step_level_norm"],
-            use_state_value_reward = args["use_state_value_reward"],
-            use_value_only = args["use_value_only"],
-            average_one_generation = args["average_one_generation"],
-            advantage_mix_allancestor = args["advantage_mix_allancestor"]
+        root, selected_terminals = build_into_tree_format(
+            self.tree_lists,
+            self.decode_fn,
+            args['num_traces'],
+            args["balance_ratio"],
+            args["average_one_generation"],
+            use_weighted_value=args["use_weighted_value"],
+            use_all_terminals=args["use_all_terminals"],
+            weighted_value_style=args["weighted_value_style"],
+            overall_norm_style=args["overall_norm_style"],
+            inner_repetition_penalty=args["inner_repetition_penalty"],
         )
+        paths = gather_paths(
+            root=root,
+            selected_terminals=selected_terminals,
+            pass_k=args['num_traces'],
+            use_orm_reward=args['use_orm_reward'],
+            use_chain_reward=args["use_chain_reward"],
+            step_level_norm=args["step_level_norm"],
+            use_state_value_reward=args["use_state_value_reward"],
+            use_value_only=args["use_value_only"],
+            average_one_generation=args["average_one_generation"],
+            advantage_mix_allancestor=args["advantage_mix_allancestor"]
+        )
+        if args["training_type"] == "general":
+            return paths,root.reward_raw
         return paths
 
     def serialize_tree_list(self, tree_list):
@@ -399,11 +449,63 @@ class EntropyGuidedChainLocalManager:
         """
         problem = item["problem"]
         answer = item["golden_answer"]
-
-        paths = self.entropy_guided_chain(problem, answer, args=args)
+        if args["training_type"] == "general":
+            paths, raw_avg_reward = self.entropy_guided_chain(problem, answer, args=args)
+        else:
+            paths = self.entropy_guided_chain(problem, answer, args=args)
         result = {
             "problem": problem,
             "golden_answer": answer,
             "paths": paths,
+            "raw_avg_reward": raw_avg_reward if args["training_type"] == "general" else None
         }
         return result
+
+    def select_diverse_tokens(self, token_indices, scores, n):
+        """
+        从 top-k 个 token 中选择最分散的 n 个 token
+
+        Args:
+            token_indices: 候选token的索引列表
+            scores: 对应的分数列表（熵值或概率）
+            upsampling_factor: 上采样倍数
+
+        Returns:
+            selected_indices: 选中的token索引列表
+        """
+        # n = len(token_indices) // upsampling_factor
+        if n == 0:
+            return token_indices
+
+        import numpy as np
+
+        # 将token_indices转换为numpy数组以便计算
+        tokens = np.array(token_indices)
+
+        # 初始化选择列表，先选择得分最高的token
+        selected = [0]  # 选择第一个token（得分最高的）
+        remaining = list(range(1, len(tokens)))
+
+        # 选择剩余的tokens
+        while len(selected) < n:
+            max_min_dist = -float('inf')
+            best_idx = -1
+
+            # 对于每个候选token
+            for i in remaining:
+                # 计算与已选token的最小距离（使用token_id的差值的绝对值作为距离）
+                min_dist = float('inf')
+                for j in selected:
+                    dist = abs(int(tokens[i]) - int(tokens[j]))
+                    min_dist = min(min_dist, dist)
+
+                # 如果这个token能提供更大的最小距离，就选择它
+                if min_dist > max_min_dist:
+                    max_min_dist = min_dist
+                    best_idx = i
+
+            selected.append(best_idx)
+            remaining.remove(best_idx)
+
+        # 返回选中的token索引
+        return [token_indices[i] for i in selected]

@@ -119,7 +119,7 @@ def create_vllm_engines(
                 seed=int(seed) + _,
                 max_model_len=23856,
                 enable_prefix_caching=enable_prefix_caching,
-                enforce_eager=True
+                # enforce_eager=True
             )
         )
 

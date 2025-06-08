@@ -88,6 +88,9 @@ def parallel_entropy_guided_tree(
 
     result = manager.process_single_item(item, args)
     paths = result["paths"]
+    if args["training_type"] == "general":
+        raw_avg_reward = result["raw_avg_reward"]
+        return paths, raw_avg_reward
     return paths
 
 
@@ -106,23 +109,23 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
 
     for data in tqdm(data_batch, desc=f"GPU {gpu_id} progress"):
         item = {
-            "problem": data["Question"],
-            "golden_answer": data["Answer"],
+            "problem": data["text"],
+            "golden_answer": data["label"],
             # "difficulty": data["difficulty"]
         }
         args = {
             "temperature": 1.2,
             "top_p": 0.9,
-            "m": 8,
-            "n": 4,
-            "l": 2,
-            "t": 1,
+            "m": 6,
+            "n": 2,
+            "l": 1,
+            "t": 2,
             "evaluator_urls": evaluator_urls,
             "extractor_urls": extractor_urls,
             "eos_tokens": eos_tokens,
             "use_pure_binary": False,
-            "entropy_rm_urls": ["http://172.18.73.102:8000/v1"],
-            "num_traces": 32,
+            "entropy_rm_urls": ["http://172.18.80.30:8000/encode"],
+            "num_traces": 30,
             "use_pure_RM" : True,
             "use_orm_reward" : False,
             "use_chain_reward" : False,
@@ -136,6 +139,11 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
             "use_all_terminals": False,
             "a": 0.5,
             "b": 0.5,
+            "generate_max_len" : 2048,
+            "weighted_value_style": "sqrt",
+            "overall_norm_style": "token",
+            "inner_repetition_penalty" : False,
+            "use_diverse_sampling" : False,
         }
 
         manager = EntropyGuidedChainLocalManager(
@@ -156,10 +164,10 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
         #         with open(output_file, "a", encoding="utf-8") as f:
         #             json.dump(result, f, ensure_ascii=False)
         #             f.write("\n")
-        if output_file:
-            with open(output_file, "a", encoding="utf-8") as f:
-                json.dump(result, f, ensure_ascii=False)
-                f.write("\n")
+        # if output_file:
+        #     with open(output_file, "a", encoding="utf-8") as f:
+        #         json.dump(result, f, ensure_ascii=False)
+        #         f.write("\n")
 
 
 if __name__ == '__main__':
@@ -167,7 +175,7 @@ if __name__ == '__main__':
     # MODEL_PATH = "/data/o1-cloud/checkpoints/sft/glm_9b_1102"
 
     # MODEL_PATH = "/data/share/checkpoint/glm-o1-2w-sft"
-    MODEL_PATH = "/data/o1-cloud/checkpoints/rl/qwen-14b-o1/epoch_3"
+    MODEL_PATH = "/data/o1-cloud/checkpoints/rl/qwen-14b-general-removehistory/epoch_1"
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_PATH,
         trust_remote_code=True
@@ -229,14 +237,15 @@ if __name__ == '__main__':
     #     json.dump({"path":paths},f,ensure_ascii=False)
 
     # 以下是用于本地评测 omnimath-500 passrate 的代码
-    eval_path = "/workspace/lurui/rm_simple_evals/data/math/MATH500.jsonl"
-    output_file = "./res/output_8_4_2_2.jsonl"
+    eval_path = "/workspace/lurui/openrlhf-glm-data/general_and_math_2-1_mix.jsonl"
+    output_file = "./res/output_6_2_1_2.jsonl"
     # tokenizer_path = "/data/share/checkpoint/glm-o1-2w-sft"
     tokenizer_path = MODEL_PATH
     evaluator_urls = ["http://172.18.74.194:8000/v1"]
     extractor_urls = ["http://172.18.75.153:8000/v1"]
     # eos_tokens = [151329, 151336, 151338]
-    eos_tokens = ["<|user|>", "<|endoftext|>", "<|observation|>"]
+    # eos_tokens = ["<|user|>", "<|endoftext|>", "<|observation|>"]
+    eos_tokens = ["<|im_end|>"]
 
     # Read input data
     with open(eval_path, "r", encoding="utf-8") as f:

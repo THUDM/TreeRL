@@ -43,7 +43,7 @@ class PolicyLoss(nn.Module):
     ) -> torch.Tensor:
         ratio = (log_probs - old_log_probs).exp()
         surr1 = ratio * advantages
-        surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * advantages
+        surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps * 1.3) * advantages
         loss = -torch.min(surr1, surr2)
         loss = masked_mean(loss, action_mask, dim=-1).mean()
         return loss
@@ -137,7 +137,7 @@ class ReinforcePolicyLoss(nn.Module):
         # log_probs = log_probs.clamp(min=-5)
 
         surr1 = ratio * rewards
-        surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * rewards
+        surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps * 1.3) * rewards
         loss = -torch.min(surr1, surr2)
         # if kl_coef > 0 and kl is not None:
             # loss = loss + kl_coef * kl

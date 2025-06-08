@@ -1,8 +1,10 @@
 from __future__ import annotations
+import math
 from typing import List, Optional, Callable
 from pydantic import BaseModel
 import json
 import random
+from collections import deque
 
 
 class MCTSNode(BaseModel):
@@ -20,6 +22,8 @@ class MCTSNode(BaseModel):
     accumulated_value: float = 0
     repeat:bool = False
     value: float = 0
+    finish_reason: Optional[str] = None
+    reward_raw: float = None
 
 class TreeNode:
     def __init__(
@@ -86,6 +90,10 @@ class TreeNode:
 
         # --- 掩码信息 ---
         self.mask: List[bool] = [False] * len(self.token_str_list)
+        
+        # 如果是旁枝，第一个 token 就不需要再被选中了
+        if len(self.aggregate_token_ids) > 0 and len(self.token_str_list) > 0:
+            self.mask[0] = True
         
         # 检查是否超过最大长度
         total_length = len(self.aggregate_token_ids) + len(self.token_id_list)
@@ -192,19 +200,27 @@ class TreeNode:
 
         # 如果不够 top_n 个，复制若干份，确保鲁棒性
         # 但这样可能会导致重复，所以目前不使用
-        # while len(result) < top_n:
-        #     result += result[:top_n - len(result)]
+        while len(result) < top_n:
+            result += result[:top_n - len(result)]
 
         return result
 
-def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,average_one_generation=False,use_weighted_value=False,use_all_terminals = False) -> MCTSNode:
+def build_into_tree_format(
+    tree_lists,
+    decode_fn,
+    num_traces,balance_ratio=0,
+    average_one_generation=False,
+    use_weighted_value=False,
+    use_all_terminals=False,
+    weighted_value_style="uniform",
+    overall_norm_style = "token",
+    inner_repetition_penalty=False) -> MCTSNode:
     # from IPython import embed
     # embed()
     all_leaves = []
     try:
         def convert_to_json(node: MCTSNode):
             if not node.children:
-                print("answer_token: ",node.answer_token)
                 return {
                     "answer": node.answer,
                     "answer_token": node.answer_token,
@@ -215,10 +231,10 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
                     "terminal_in_subtree": node.terminal_in_subtree,
                     "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
                     "selected_terminal_in_subtree": node.selected_terminal_in_subtree,
-                    "accumulated_value": node.accumulated_value
+                    "accumulated_value": node.accumulated_value,
+                    "finish_reason": node.finish_reason,
                 }
             else:
-                print("answer_token: ",node.answer_token)
                 return {
                     "answer": node.answer,
                     "answer_token": node.answer_token,
@@ -231,6 +247,7 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
                     "correct_terminal_in_subtree": node.correct_terminal_in_subtree,
                     "selected_terminal_in_subtree": node.selected_terminal_in_subtree,
                     "accumulated_value": node.accumulated_value,
+                    "finish_reason": node.finish_reason,
                 }
                 
         def build_tree_node(decode_fn,tree_node: TreeNode, parent_mcts_node: Optional[MCTSNode] = None) -> MCTSNode:
@@ -261,7 +278,8 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
                 depth=(parent_mcts_node.depth + 1) if parent_mcts_node else 0,
                 terminal=is_terminal,
                 R = R,
-                main_chain = main_chain
+                main_chain = main_chain,
+                finish_reason=tree_node.finish_reason
             )
             
             if root_node.terminal:
@@ -298,7 +316,8 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
                         depth=current_mcts_node.depth + 1,
                         terminal=is_terminal,
                         R = R,
-                        main_chain = main_chain
+                        main_chain = main_chain,
+                        finish_reason=tree_node.finish_reason,
                     )
                     current_mcts_node.children.append(segment_node)
                     if segment_node.terminal:
@@ -327,30 +346,35 @@ def build_into_tree_format(tree_lists,decode_fn,num_traces,balance_ratio=0,avera
         # 根的所有孩子是所有tree_lists[i][0]
         for i, tree_list in enumerate(tree_lists):
             if len(tree_list) > 0:
-                root.children.append(build_tree_node(decode_fn,tree_list[0], root))
+                root.children.append(build_tree_node(decode_fn, tree_list[0], root))
         
-        leaf_normalize(all_leaves,root,average_one_generation)
+        
+        leaf_normalize(all_leaves,root, average_one_generation,overall_norm_style,inner_repetition_penalty)
         if use_all_terminals:
             print("use all terminals into training")
             selected_terminals = all_leaves
         else:
-            selected_terminals = select_terminal(all_leaves,num_traces,balance_ratio)
+            selected_terminals = select_terminal(all_leaves, num_traces,balance_ratio)
+
         if use_weighted_value:
             print("weighted value")
             for leaf in selected_terminals:
                 selected_backpropagate(leaf)
-            compute_weighted_update(root)
-        # with open("/workspace/lurui/openrlhf-mcts/data/entropy_tree_local.jsonl","a") as f:
+            # assert weighted_value_style == "sqrt"
+            compute_weighted_update(root, reweighted_value_style=weighted_value_style)
+        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/entropy_tree_glm.jsonl","a") as f:
         #     f.write(json.dumps(convert_to_json(root)))
         #     f.write("\n")
-        
         return root, selected_terminals
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(e)
         from IPython import embed
         embed()
-        
-def leaf_normalize(nodes,root,average_one_generation:bool = False):
+      
+      
+def leaf_normalize(nodes,root,average_one_generation:bool = False,overall_norm_style = "token",inner_repetition_penalty:bool = False):
     leaf_correctness = [leaf.R for leaf in nodes]
     print("leaf_correctness",leaf_correctness)
     _sum = sum(leaf_correctness)
@@ -360,12 +384,19 @@ def leaf_normalize(nodes,root,average_one_generation:bool = False):
         assert False, "entropy num_traces == 0"
     else:
         mean = [(_sum - leaf_correctness[i]) / num for i in range(len(leaf_correctness))]
+        # root.reward_raw用所有的leaf_correctness的平均值
+        root.reward_raw = sum(leaf_correctness) / len(leaf_correctness)
         for i, leaf in enumerate(nodes):
             leaf.R = leaf.R - mean[i]
             leaf.accumulated_value = leaf.R
+            if inner_repetition_penalty:
+                if leaf.finish_reason != "stop":
+                    leaf.R = -1
+                    leaf.accumulated_value = leaf.R
             leaf_backpropagate(leaf)
         if average_one_generation:
             compute_accumulated_value(root)
+    normalize_all_steps(root, overall_norm_style)
             
 def leaf_backpropagate(node: MCTSNode):
     if node.terminal and node.main_chain:
@@ -386,6 +417,52 @@ def leaf_backpropagate(node: MCTSNode):
             parent.terminal_in_subtree += 1
             parent.accumulated_value += node.accumulated_value
             parent = parent.parent
+
+def normalize_all_steps(root: MCTSNode, overall_norm_style: str = "token"):
+    # 从root开始遍历所有节点，对所有terminal_in_subtree！=0节点的accumulated_value进行归一化
+    all_steps = []
+    to_consider = deque([root])
+    while to_consider:
+        current_node = to_consider.popleft()
+        if current_node.terminal_in_subtree != 0 or current_node.terminal:
+            all_steps.append(current_node)
+        to_consider.extend(current_node.children)
+
+    print("all_step value",len(all_steps))
+    if overall_norm_style == "step":
+        print("step level normalization")
+        step_sum = 0
+        step_num = 0
+        for node in all_steps:
+            # step_sum += node.accumulated_value*node.terminal_in_subtree
+            # step_num += node.terminal_in_subtree
+            step_sum += node.accumulated_value
+            step_num += node.terminal_in_subtree
+        if step_num == 0:
+            mean = 0
+        else:
+            mean = step_sum/step_num
+        print("mean:", mean,step_sum,step_num)
+        for node in all_steps:
+            node.accumulated_value = node.accumulated_value - mean * node.terminal_in_subtree
+    elif overall_norm_style == "token":
+        print("token level normalization")
+        step_sum = 0
+        step_num = 0
+        for node in all_steps:
+            # step_sum += node.accumulated_value*node.terminal_in_subtree*len(node.answer_token)
+            # step_num += node.terminal_in_subtree*len(node.answer_token)
+            step_sum += node.accumulated_value*len(node.answer_token)
+            step_num += node.terminal_in_subtree*len(node.answer_token)
+        if step_num == 0:
+            mean = 0
+        else:
+            mean = step_sum/step_num
+        print("mean:", mean)
+        for node in all_steps:
+            node.accumulated_value = node.accumulated_value - mean * node.terminal_in_subtree
+    else:
+        return
         
 def compute_accumulated_value(node: MCTSNode):
     if not node.children:  # If the node is a leaf node
@@ -473,9 +550,21 @@ def selected_backpropagate(node: MCTSNode):
         parent.selected_terminal_in_subtree += 1
         parent = parent.parent
 
-def compute_weighted_update(node: MCTSNode):
+def compute_weighted_update(node: MCTSNode, reweighted_value_style="original"):
     if node.selected_terminal_in_subtree == 0:
         return
-    node.accumulated_value = node.accumulated_value * node.terminal_in_subtree / node.selected_terminal_in_subtree
+    # assert reweighted_value_style == "sqrt"
+    if reweighted_value_style == "sqrt":
+        node.accumulated_value = node.accumulated_value / math.sqrt(node.selected_terminal_in_subtree)
+    elif reweighted_value_style == "uniform":
+        node.accumulated_value = node.accumulated_value / node.selected_terminal_in_subtree
+    elif reweighted_value_style == "original":
+        node.accumulated_value = node.accumulated_value
+    else:
+        raise ValueError(f"Unsupported rewegihted_value_style: {reweighted_value_style}")
+    
+    # node.accumulated_value = node.accumulated_value * node.terminal_in_subtree / node.selected_terminal_in_subtree
+    # node.accumulated_value = node.accumulated_value * node.terminal_in_subtree / node.selected_terminal_in_subtree
+    
     for child in node.children:
-        compute_weighted_update(child)
+        compute_weighted_update(child, reweighted_value_style=reweighted_value_style)

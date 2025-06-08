@@ -352,6 +352,7 @@ class MCTSr(BaseModel):
     selection_policy: SelectionPolicy = SelectionPolicy.IMPORTANCE_SAMPLING
     first_token_temperature: bool = False
     selected_terminals: list[MCTSNode] = []
+    leaf_num_and_token: dict[int, int] = {}
     # initialize_strategy: InitializeStrategy = InitializeStrategy.ZERO_SHOT
 
     root: MCTSNode = MCTSNode(
@@ -645,6 +646,7 @@ class MCTSr(BaseModel):
 
         self.root = MCTSNode(
             state=init_prompt,
+            
             answer="",
             max_children=self.max_children,
             depth=0
@@ -658,9 +660,10 @@ class MCTSr(BaseModel):
         leaf_num = 0
         terminal_flag = False
         start_time = time.time()
+        leaf_rank = 0
 
         while node_number < self.max_nodes and time.time() - start_time < self.max_time_use:
-            nodes = self.select_node(k=self.concurrent_num, random_pick=self.random_pick)
+            nodes = self.select_node(k=self.concurrent_num,random_pick=self.random_pick)
             if not nodes:
                 print("terminated because no node to expand")
                 break
@@ -674,6 +677,14 @@ class MCTSr(BaseModel):
             # print(results)
 
             self.total_token_num += results[1]
+            terminal_generated = 0
+            for node, child_num in results[0]:
+                for child in node.children:
+                    is_terminated = child.terminal
+                    if is_terminated:
+                        terminal_generated += 1
+            leaf_rank += terminal_generated
+            self.leaf_num_and_token[leaf_rank] = self.total_token_num
 
             for node, child_num in results[0]:
                 if child_num == 0:
@@ -1493,8 +1504,8 @@ def mcts_worker(
         paths = gather_paths(mcts.root,mcts.selected_terminals,args["path_num"],use_orm_reward = mcts.use_orm_reward,use_chain_reward = mcts.use_chain_reward,step_level_norm = mcts.step_level_norm,use_state_value_reward = mcts.use_state_value_reward,use_value_only = mcts.use_value_only,average_one_generation = mcts.average_one_generation,advantage_mix_allancestor=args["advantage_mix_allancestor"])
         time_used = time.time() - start_time
         pass_num = pass_rate(paths)
-        os.makedirs("logs/outputs", exist_ok=True)
-        with open("logs/outputs/trees_vine.jsonl", "a",encoding="utf-8") as f:
+        # os.makedirs("logs/outputs", exist_ok=True)
+        with open("/workspace/lurui/openrlhf-mcts/data/outputs/trees_mcts.jsonl", "a",encoding="utf-8") as f:
         # with open("/workspace/lurui/openrlhf-mcts/data/paths.jsonl", "a",encoding="utf-8") as f:
             tree_json = convert_to_json(root)
             tree_json["random_pick"] = args["random_pick"]
@@ -1503,6 +1514,7 @@ def mcts_worker(
             tree_json["total_nodes"] = mcts.leaf_num_count
             tree_json["total_token_num"] = mcts.total_token_num
             tree_json["pass_num"] = pass_num
+            tree_json["leaf_num_and_token"] = mcts.leaf_num_and_token
             json.dump(tree_json, f)
             f.write("\n")
     except Exception as e:
@@ -1680,9 +1692,10 @@ def parallel_mcts(item, llm, tokenize_fn, detokenize_fn, args,system_prompt=None
     return mcts_worker(item, llm, tokenize_fn, detokenize_fn, args["prompt_key"], args["answer_key"], args,system_prompt)
 
 if __name__ == "__main__":
-    os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--index", type=int, required=True)
     
-    MODEL_PATH = "/workspace/lurui/glm-train_data/checkpoints/9b-sft-o1-mini-part-1212/hf_0000381"
+    MODEL_PATH = "/data/o1-cloud/checkpoints/rl/qwen-14b-o1/epoch_1"
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_PATH,
         trust_remote_code=True
@@ -1699,13 +1712,55 @@ if __name__ == "__main__":
 
     import torch
 
-    def tokenize_fn(texts, max_length=2048, device="cpu", system_prompt=None):
-        sample_input_ids = tokenizer.encode(
-            "[gMASK]<sop><|user|>\n" + texts[0][0], add_special_tokens=False)
-        sample_input_ids = sample_input_ids[-max_length:] + \
-            tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
-        output = {"input_ids": [torch.tensor(sample_input_ids)]}
-        return output
+    import json
+    import torch
+    def _tokenize_fn_llama(tokenizer, prompt, history, max_length,system_prompt=None):
+        conversation = []
+        if system_prompt:
+            conversation.append({"role": "system", "content": system_prompt})
+        if history:
+            for x in history:
+                conversation.append({"role": "user", "content": x["prompt"]})
+                conversation.append({"role": "assistant", "content": x["response"]})
+        conversation.append({"role": "user", "content": prompt})
+        sample_input_ids = tokenizer.apply_chat_template(conversation)
+        sample_input_ids = sample_input_ids[-max_length:] + tokenizer.encode("<|im_start|>assistant\n")
+        # 把sample_input_ids decode成文本
+        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/sample_input_ids.jsonl", "a") as f:
+        #     str_input_ids = tokenizer.decode(sample_input_ids)
+        #     f.write(json.dumps({"sequences":str_input_ids,"system_prompt":system_prompt}) + "\n")
+        return sample_input_ids
+
+
+    def tokenize_fn(tokenizer, texts, max_length, device,system_prompt=None):
+        batch = [_tokenize_fn_llama(tokenizer, prompt=_prompt, history=_history, max_length=max_length,system_prompt=system_prompt) for _prompt, _history in zip(*texts)]
+
+        batch_length = max([len(x) for x in batch])
+        pad_token_id = tokenizer.pad_token_id
+        max_length = min(max_length, batch_length)
+
+        def batch_encode_plus(input_ids):
+            sample_len = len(input_ids)
+            if sample_len < max_length:
+                attention_mask = [0] * (max_length - sample_len) + [1] * sample_len
+                input_ids = [pad_token_id] * (max_length - sample_len) + input_ids
+            else:
+                attention_mask = [1] * max_length
+            input_ids = torch.tensor(input_ids)
+            attention_mask = torch.tensor(attention_mask)
+
+            return {"input_ids": input_ids, "attention_mask": attention_mask}
+        
+        # batch = [batch_encode_plus(x) for x in batch]
+        try:
+            batch = tokenizer.batch_encode_plus(batch, return_tensors="pt", is_split_into_words=True, padding=True)
+        except:
+            batch = [batch_encode_plus(x) for x in batch]
+            batch = {
+                "input_ids": torch.stack([x["input_ids"] for x in batch]),
+                "attention_mask": torch.stack([x["attention_mask"] for x in batch]),
+            }
+        return {k: v.to(device) for k, v in batch.items()}
 
     def decode_fn(ids):
         return tokenizer.decode(ids, skip_special_tokens=False)
@@ -1714,29 +1769,29 @@ if __name__ == "__main__":
         model=MODEL_PATH,
         tensor_parallel_size=1,
         trust_remote_code=True,
-        seed=3407,
         dtype="bfloat16",
         enforce_eager=True
     )
     # args = {"temperature": 1.2, "top_p": 0.9, "max_depth": 40, "max_nodes": 256, "max_children": 4, "min_children":4, "shallow_enwide":False,"exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": 16, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": 16,"prompt_max_len":1024,"max_token_num":4096,"max_time_use":6000,"step_level_norm":False,"random_pick":True,"use_orm_reward":False,"select_correct_leaf":False,"use_chain_reward":True,"use_state_value_reward":True,"use_pure_RM":True}
-    args = {"temperature": 1.2, "top_p": 0.9, "max_depth": 40, "max_nodes": 256, "max_children": 4,"min_children":2, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "qwen", "pass_k": 32, "backprop": 0, "max_node_per_depth": 32, "first_token_temperature": 1, "look_ahead": 0, "concurrent_num": 8, "path_num": 32,"prompt_max_len":1024,"max_token_num":4096,"max_time_use":6000,"step_level_norm":False,"random_pick":True,"use_orm_reward":False,"select_correct_leaf":True,"use_chain_reward":False,"use_state_value_reward":False,"use_value_only":True,"use_pure_RM":False,"use_pure_binary":True,"average_one_generation":True,"advantage_mix_allancestor":False}
+    args = {"temperature": 1.2, "top_p": 0.9, "max_depth": 40, "max_nodes": 512, "max_children": 4,"min_children":4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "answer", "backbone": "qwen", "pass_k": 64, "backprop": 0, "max_node_per_depth": 64, "first_token_temperature": 1, "look_ahead": 0, "concurrent_num": 8, "path_num": 64,"prompt_max_len":1024,"max_token_num":8192,"max_time_use":6000,"step_level_norm":False,"random_pick":True,"use_orm_reward":False,"select_correct_leaf":True,"use_chain_reward":False,"use_state_value_reward":False,"use_value_only":True,"use_pure_RM":False,"use_pure_binary":True,"average_one_generation":True,"advantage_mix_allancestor":False}
     
     
-    input_file = "/workspace/lurui/pattern_mcts/search_algorithms/mcts/data/math500/MATH500.jsonl"
+    # input_file = "/data/share/glm-simple-evals/data/omni_math_500/test.jsonl"
+    input_file = "/workspace/lurui/openrlhf-mcts/data/omni_math_500/part_" + str(parser.parse_args().index) + ".jsonl"
 
     # item = {"problem":data["Question"],"golden_answer":data["Answer"]}
-    item = {"problem":"Define\n\\[p = \\sum_{k = 1}^\\infty \\frac{1}{k^2} \\quad \\text{and} \\quad q = \\sum_{k = 1}^\\infty \\frac{1}{k^3}.\\]Find a way to write\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3}\\]in terms of $p$ and $q.$", "solution": "We count the number of times $\\frac{1}{n^3}$ appears in the sum\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3},\\]where $n$ is a fixed positive integer.  (In other words, we are conditioning the sum on $j + k$.)  We get a term of $\\frac{1}{n^3}$ each time $j + k = n.$  The pairs $(j,k)$ that work are $(1,n - 1),$ $(2,n - 2),$ $\\dots,$ $(n - 1,1),$ for a total of $n - 1$ pairs.  Therefore,\n\\begin{align*}\n\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3} &= \\sum_{n = 1}^\\infty \\frac{n - 1}{n^3} \\\\\n&= \\sum_{n = 1}^\\infty \\left( \\frac{n}{n^3} - \\frac{1}{n^3} \\right) \\\\\n&= \\sum_{n = 1}^\\infty \\left( \\frac{1}{n^2} - \\frac{1}{n^3} \\right) \\\\\n&= \\sum_{n = 1}^\\infty \\frac{1}{n^2} - \\sum_{n = 1}^\\infty \\frac{1}{n^3} \\\\\n&= \\boxed{p - q}.\n\\end{align*}", "golden_answer": "p - q"}
+    # item = {"problem":"Define\n\\[p = \\sum_{k = 1}^\\infty \\frac{1}{k^2} \\quad \\text{and} \\quad q = \\sum_{k = 1}^\\infty \\frac{1}{k^3}.\\]Find a way to write\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3}\\]in terms of $p$ and $q.$", "solution": "We count the number of times $\\frac{1}{n^3}$ appears in the sum\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3},\\]where $n$ is a fixed positive integer.  (In other words, we are conditioning the sum on $j + k$.)  We get a term of $\\frac{1}{n^3}$ each time $j + k = n.$  The pairs $(j,k)$ that work are $(1,n - 1),$ $(2,n - 2),$ $\\dots,$ $(n - 1,1),$ for a total of $n - 1$ pairs.  Therefore,\n\\begin{align*}\n\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3} &= \\sum_{n = 1}^\\infty \\frac{n - 1}{n^3} \\\\\n&= \\sum_{n = 1}^\\infty \\left( \\frac{n}{n^3} - \\frac{1}{n^3} \\right) \\\\\n&= \\sum_{n = 1}^\\infty \\left( \\frac{1}{n^2} - \\frac{1}{n^3} \\right) \\\\\n&= \\sum_{n = 1}^\\infty \\frac{1}{n^2} - \\sum_{n = 1}^\\infty \\frac{1}{n^3} \\\\\n&= \\boxed{p - q}.\n\\end{align*}", "golden_answer": "p - q"}
     # item = {"problem":"How many positive whole-number divisors does 196 have?", "solution": "First prime factorize $196=2^2\\cdot7^2$.  The prime factorization of any divisor of 196 cannot include any primes other than 2 and 7.  We are free to choose either 0, 1, or 2 as the exponent of 2 in the prime factorization of a divisor of 196.  Similarly, we may choose 0, 1, or 2 as the exponent of 7.  In total, there are $3\\times 3=9$ possibilities for the prime factorization of a divisor of 196.  Distinct prime factorizations correspond to distinct integers, so there are $\\boxed{9}$ divisors of 196.","golden_answer":"9"}
-    paths = parallel_mcts(item, llm, tokenize_fn,decode_fn, args)
-    with open("/workspace/lurui/openrlhf-mcts/data/finalpath.jsonl", "w") as f:
-        json.dump(paths, f)
+    # paths = parallel_mcts(item, llm, tokenize_fn,decode_fn, args)
+    # with open("/workspace/lurui/openrlhf-mcts/data/finalpath.jsonl", "w") as f:
+    #     json.dump(paths, f)
 
-    # with open(input_file, "r", encoding="utf-8") as f:
-    #     datas = [json.loads(line) for line in f]
-    #     for data in datas:
-    #         item = {"problem":data["Question"],"golden_answer":data["Answer"]}
-    #         # item = {"problem":"Define\n\\[p = \\sum_{k = 1}^\\infty \\frac{1}{k^2} \\quad \\text{and} \\quad q = \\sum_{k = 1}^\\infty \\frac{1}{k^3}.\\]Find a way to write\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3}\\]in terms of $p$ and $q.$", "solution": "We count the number of times $\\frac{1}{n^3}$ appears in the sum\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3},\\]where $n$ is a fixed positive integer.  (In other words, we are conditioning the sum on $j + k$.)  We get a term of $\\frac{1}{n^3}$ each time $j + k = n.$  The pairs $(j,k)$ that work are $(1,n - 1),$ $(2,n - 2),$ $\\dots,$ $(n - 1,1),$ for a total of $n - 1$ pairs.  Therefore,\n\\begin{align*}\n\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3} &= \\sum_{n = 1}^\\infty \\frac{n - 1}{n^3} \\\\\n&= \\sum_{n = 1}^\\infty \\left( \\frac{n}{n^3} - \\frac{1}{n^3} \\right) \\\\\n&= \\sum_{n = 1}^\\infty \\left( \\frac{1}{n^2} - \\frac{1}{n^3} \\right) \\\\\n&= \\sum_{n = 1}^\\infty \\frac{1}{n^2} - \\sum_{n = 1}^\\infty \\frac{1}{n^3} \\\\\n&= \\boxed{p - q}.\n\\end{align*}", "golden_answer": "p - q"}
-    #         # item = {"problem":"A group of $12$ pirates agree to divide a treasure chest of gold coins among themselves as follows. The $k^\\text{th}$ pirate to take a share takes $\\frac{k}{12}$ of the coins that remain in the chest. The number of coins initially in the chest is the smallest number for which this arrangement will allow each pirate to receive a positive whole number of coins. How many coins does the $12^{\\text{th}}$ pirate receive?\n$\\textbf{(A)} \\ 720 \\qquad  \\textbf{(B)} \\ 1296 \\qquad  \\textbf{(C)} \\ 1728 \\qquad  \\textbf{(D)} \\ 1925 \\qquad  \\textbf{(E)} \\ 3850$", "solution": "First prime factorize $196=2^2\\cdot7^2$.  The prime factorization of any divisor of 196 cannot include any primes other than 2 and 7.  We are free to choose either 0, 1, or 2 as the exponent of 2 in the prime factorization of a divisor of 196.  Similarly, we may choose 0, 1, or 2 as the exponent of 7.  In total, there are $3\\times 3=9$ possibilities for the prime factorization of a divisor of 196.  Distinct prime factorizations correspond to distinct integers, so there are $\\boxed{9}$ divisors of 196.","golden_answer":"9"}
-    #         paths = parallel_mcts(item, llm, tokenize_fn, args)
-    #         with open("/workspace/lurui/openrlhf-mcts/data/paths.json", "w") as f:
-    #             json.dump(paths, f)
+    with open(input_file, "r", encoding="utf-8") as f:
+        datas = [json.loads(line) for line in f]
+        for data in datas:
+            item = {"problem":data["problem"],"golden_answer":data["answer"]}
+            # item = {"problem":"Define\n\\[p = \\sum_{k = 1}^\\infty \\frac{1}{k^2} \\quad \\text{and} \\quad q = \\sum_{k = 1}^\\infty \\frac{1}{k^3}.\\]Find a way to write\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3}\\]in terms of $p$ and $q.$", "solution": "We count the number of times $\\frac{1}{n^3}$ appears in the sum\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3},\\]where $n$ is a fixed positive integer.  (In other words, we are conditioning the sum on $j + k$.)  We get a term of $\\frac{1}{n^3}$ each time $j + k = n.$  The pairs $(j,k)$ that work are $(1,n - 1),$ $(2,n - 2),$ $\\dots,$ $(n - 1,1),$ for a total of $n - 1$ pairs.  Therefore,\n\\begin{align*}\n\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3} &= \\sum_{n = 1}^\\infty \\frac{n - 1}{n^3} \\\\\n&= \\sum_{n = 1}^\\infty \\left( \\frac{n}{n^3} - \\frac{1}{n^3} \\right) \\\\\n&= \\sum_{n = 1}^\\infty \\left( \\frac{1}{n^2} - \\frac{1}{n^3} \\right) \\\\\n&= \\sum_{n = 1}^\\infty \\frac{1}{n^2} - \\sum_{n = 1}^\\infty \\frac{1}{n^3} \\\\\n&= \\boxed{p - q}.\n\\end{align*}", "golden_answer": "p - q"}
+            # item = {"problem":"A group of $12$ pirates agree to divide a treasure chest of gold coins among themselves as follows. The $k^\\text{th}$ pirate to take a share takes $\\frac{k}{12}$ of the coins that remain in the chest. The number of coins initially in the chest is the smallest number for which this arrangement will allow each pirate to receive a positive whole number of coins. How many coins does the $12^{\\text{th}}$ pirate receive?\n$\\textbf{(A)} \\ 720 \\qquad  \\textbf{(B)} \\ 1296 \\qquad  \\textbf{(C)} \\ 1728 \\qquad  \\textbf{(D)} \\ 1925 \\qquad  \\textbf{(E)} \\ 3850$", "solution": "First prime factorize $196=2^2\\cdot7^2$.  The prime factorization of any divisor of 196 cannot include any primes other than 2 and 7.  We are free to choose either 0, 1, or 2 as the exponent of 2 in the prime factorization of a divisor of 196.  Similarly, we may choose 0, 1, or 2 as the exponent of 7.  In total, there are $3\\times 3=9$ possibilities for the prime factorization of a divisor of 196.  Distinct prime factorizations correspond to distinct integers, so there are $\\boxed{9}$ divisors of 196.","golden_answer":"9"}
+            paths = parallel_mcts(item, llm, tokenize_fn, args)
+            with open("/workspace/lurui/openrlhf-mcts/data/paths.json", "w") as f:
+                json.dump(paths, f)

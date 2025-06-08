@@ -335,15 +335,42 @@ class ReinforceTrainer(ABC):
                 kl=experience.kl,
                 kl_coef=self.strategy.args.init_kl_coef,
             )
-
+        if self.strategy.args.l2_logits_loss_coeff > 0:
+            print("l2_logits_loss_coeff",self.strategy.args.l2_logits_loss_coeff)
+            logits = output["logits"].pow(2).mean(dim=-1)
+            advantage = experience.advantages
+            advantage_seq_avg = advantage.abs().mean(dim=-1)
+            l2_loss = advantage_seq_avg.view(-1, 1) * logits
+            l2_loss = l2_loss.mean()
+        else:
+            l2_loss = 0
         # mixtral
         if self.aux_loss:
             aux_loss = output.aux_loss
         else:
             aux_loss = 0
         loss = actor_loss + aux_loss * self.args.aux_loss_coef
+
+        if self.strategy.args.l2_logits_loss_coeff > 0:
+            loss += l2_loss * self.strategy.args.l2_logits_loss_coeff
+        
         self.strategy.backward(loss, self.actor, self.actor_optim)
 
+        # grad norm calculation of deepspeed - by lurui
+        # reference https://github.com/deepspeedai/DeepSpeed/issues/5883
+        import deepspeed.utils
+        grad_norm = 0.0
+        for param in self.actor.model.module.parameters():
+            grad_data = deepspeed.utils.safe_get_full_grad(param)
+            # if self.strategy.is_rank_0():
+                # print("grad_data.norm(2): ", grad_data.norm(2))
+            grad_norm += grad_data.norm(2).item() ** 2
+        grad_norm = grad_norm ** 0.5
+        
+        # Print some debug information
+        if self.strategy.is_rank_0():
+            self.strategy.print(f"Debug - Gradient norm: {grad_norm}")
+            
         # ptx loss
         if self.pretrain_dataloader is not None:
             data = next(self.pretrain_dataloader)
@@ -375,6 +402,7 @@ class ReinforceTrainer(ABC):
         # status
         status = {
             "policy_loss": actor_loss.item(),
+            "grad_norm": grad_norm,
         }
         if self.pretrain_dataloader is not None:
             status["ptx_loss"] = ptx_loss.item()

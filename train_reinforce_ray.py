@@ -322,6 +322,7 @@ if __name__ == "__main__":
     parser.add_argument("--normalize_reward_from_multi_traces_with_rloo", action="store_true", default=False)
     parser.add_argument("--normalize_reward_mean_only", action="store_true", default=False)
     parser.add_argument("--mask_repeated_samples", action="store_true", default=False)
+    parser.add_argument("--inner_repetition_penalty", action="store_true", default=False)
     parser.add_argument("--use_rule_based_reward", action="store_true", default=False)
     parser.add_argument("--mask_pass_confident_samples", action="store_true", default=False)
     parser.add_argument("--use_random_top_k_logits_sampling", action="store_true", default=False)
@@ -349,6 +350,10 @@ if __name__ == "__main__":
     parser.add_argument("--n", type=int, default=4)
     parser.add_argument("--l", type=int, default=2)
     parser.add_argument("--t", type=int, default=2)
+    parser.add_argument("--use_diverse_sampling",
+                        action="store_true", help="是否使用分散采样策略")
+    parser.add_argument("--diverse_upsampling", type=int,
+                        default=2, help="分散采样的上采样倍数")
     parser.add_argument("--a_coeff", type=float, default=0.5)
     parser.add_argument("--b_mean", type=float, default=2.898)
     
@@ -358,6 +363,10 @@ if __name__ == "__main__":
     
     parser.add_argument("--wandb_id", type=str, default=None)
     parser.add_argument("--resume", action="store_true", default=False)
+    parser.add_argument("--weighted_value_style", type=str, default="original")
+    parser.add_argument("--overall_norm_style", type=str, default="none")
+    parser.add_argument("--l2_logits_loss_coeff", type=float, default=0)
+    parser.add_argument("--training_type", type=str, default="math")
  
     args = parser.parse_args()
     train(args)
