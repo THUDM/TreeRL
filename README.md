@@ -7,12 +7,12 @@ Implementation for ACL'25 paper [TreeRL: LLM Reinforcement Learning with On-Poli
 TreeRL is a reinforcement learning framework that directly incorporates on-policy tree search for training, eliminating the need for separate reward model training while providing better exploration of reasoning space through strategic branching from high-uncertainty steps. Experiments on math and code reasoning benchmarks demonstrate that TreeRL can achieve consistent better performance than ChainRL under the same expeeriment setting.
 
 <p>
-  <img src="asserts/treerl-compare.png" width="420"><img src="asserts/treerl-demo.png" width="420">
+  <img src="asserts/treerl-compare.png" width="360"><img src="asserts/treerl-demo.png" width="360">
   <br />
 </p>
 
 <p>
-<img src="asserts/treerl-overview.png">
+<img src="asserts/treerl-overview.png" width="900">
 </p>
 
 ## Getting Started
