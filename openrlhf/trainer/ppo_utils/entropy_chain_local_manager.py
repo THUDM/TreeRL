@@ -40,12 +40,12 @@ class EntropyGuidedChainLocalManager:
         eos_tokens_set: List[int]
     ):
         """
-        初始化管理器。
+        initialize the manager.
 
-        :param args: 参数字典，包含 m, n, l 等。
-        :param policy_urls: 模型接口 URL 列表。
-        :param evaluator_urls: 评估器接口 URL 列表。
-        :param eos_tokens_set: 结束 token 集合。
+        :param args: the argument dictionary, containing m, n, l, etc.
+        :param policy_urls: the list of policy model urls.
+        :param evaluator_urls: the list of evaluator urls.
+        :param eos_tokens_set: the set of end-of-sequence tokens.
         """
         self.args = args
         self.llm = llm
@@ -66,10 +66,10 @@ class EntropyGuidedChainLocalManager:
 
     def serialize_tree(self, node: TreeNode) -> Dict[str, Any]:
         """
-        序列化树节点，用于存储。
+        serialize the tree node, for storage.
 
-        :param node: TreeNode 对象。
-        :return: 字典形式的树结构。
+        :param node: the TreeNode object.
+        :return: the dictionary of the tree structure.
         """
         return {
             'token_list': node.token_list,
@@ -79,10 +79,9 @@ class EntropyGuidedChainLocalManager:
         }
 
     def evaluate_node(self, args: Dict[str, Any], problem_str: str, node: TreeNode) -> Tuple[float, float]:
-        """评估单个节点的分数
+        """evaluate the score of the single node
 
-        Returns:
-            Tuple[float, float]: (binary_score, final_score)
+        :return: Tuple[float, float]: (binary_score, final_score)
         """
         if node.is_end and node.finish_reason == "stop":
             binary_score = check_result(
@@ -106,8 +105,6 @@ class EntropyGuidedChainLocalManager:
         )
 
         if args["use_pure_RM"]:
-            # with open("/workspace/lurui/openrlhf-mcts/data/rewards.jsonl", "a") as f:
-            #     f.write(json.dumps({"reward": value}) + "\n")
             # a, b = 0.5, -2.898
             a = args.get("a", 0.5)
             b = args.get("b", -2.898)
@@ -123,17 +120,17 @@ class EntropyGuidedChainLocalManager:
         return binary_score, final_score
 
     def evaluate_trees(self, problem_str: str, answer_str: str, args: Dict[str, Any]) -> List[float]:
-        """并发评估所有树中的节点"""
+        """evaluate the nodes in all trees"""
         self.answer_str = answer_str  # 临时存储供evaluate_node使用
 
-        # 收集所有需要评估的节点
+        # collect all the nodes to evaluate
         evaluation_tasks = [
             (args, problem_str, node)
             for tree_list in self.tree_lists
             for node in tree_list
         ]
 
-        # 使用线程池并发评估
+        # use thread pool to evaluate
         # with ThreadPoolExecutor(max_workers=min(32, len(evaluation_tasks))) as executor:
         with ThreadPoolExecutor(max_workers=min(8, len(evaluation_tasks))) as executor:
             results = list(executor.map(
@@ -141,7 +138,7 @@ class EntropyGuidedChainLocalManager:
                 evaluation_tasks
             ))
 
-        # 更新节点分数并收集结果
+        # update the node scores and collect the results
         pass_k_result = []
         for (binary_score, final_score), (_, _, node) in zip(results, evaluation_tasks):
             node.binary_score = binary_score
@@ -161,11 +158,11 @@ class EntropyGuidedChainLocalManager:
         system_prompt=None,
     ) -> Dict[str, Any]:
         """
-        熵引导的链式推理。
+        entropy-guided chain reasoning.
 
-        :param problem_str: 问题字符串。
-        :param answer_str: 标准答案字符串。
-        :return: 存储路径和结果的字典。
+        :param problem_str: the problem string.
+        :param answer_str: the standard answer string.
+        :return: the dictionary of the paths and results.
         """
         # init_prompt_with_template = GLM_QA_PROMPT.format(
         #     prompt=problem_str, response=""
@@ -189,11 +186,11 @@ class EntropyGuidedChainLocalManager:
 
         time_start = time.time()
 
-        # 初始化 M 棵树
+        # initialize M trees
         self.tree_lists = []
         initial_prompt_ids = [init_prompt_ids_with_template] * M
 
-        # 获取初始推理结果
+        # get the initial inference results
         # initial_results = query_local_vllm_completions_with_logprobs(
         for _ in range(4):
             initial_results = query_local_vllm_ids_with_logprobs(
@@ -222,14 +219,14 @@ class EntropyGuidedChainLocalManager:
             )
             self.tree_lists.append([root_node])
 
-        # 迭代扩展树
+        # iterate to expand the trees
         for iteration in range(L):
             # print(f"第 {iteration + 1}/{L} 轮迭代")
 
-            # 收集所有可扩展节点的熵 token 索引
+            # collect all the entropy token indices of the expandable nodes
             expansion_tasks = []
             for tree_idx, tree_list in enumerate(self.tree_lists):
-                # 先在每个 Node 中取出 top-N 节点
+                # first get the top-N nodes in each Node
                 tree_entropy_tokens = []
                 for node_idx, node in enumerate(tree_list):
                     if not all(node.mask):  # 节点未被完全 mask
@@ -245,35 +242,35 @@ class EntropyGuidedChainLocalManager:
                         for token_idx in entropy_tokens:
                             # 存储 (熵值, tree_idx, node_idx, node, token_idx)
                             entropy_value = - \
-                                node.log_prob_list[token_idx]  # 负对数概率作为熵
+                                node.log_prob_list[token_idx]  # negative log probability as entropy
                             tree_entropy_tokens.append(
                                 (entropy_value, tree_idx,
                                  node_idx, node, token_idx)
                             )
 
-                # 因为是同一道题目的，所以不需要考虑跨题目的熵值
-                # 从中选择 top-N 个节点作为扩展任务
-                tree_entropy_tokens.sort(reverse=True)  # 按熵值降序排序
+                # because it is the same problem, so we don't need to consider the entropy value across problems
+                # select the top-N nodes as the expansion tasks
+                tree_entropy_tokens.sort(reverse=True)  # sort by entropy value in descending order
 
                 if self.args['use_diverse_sampling']:
-                    # 获取 top-(ratio*N) 的候选 token
+                    # get the candidate tokens of top-(ratio*N)
                     token_indices = [token_idx for _, _,
                                      _, _, token_idx in tree_entropy_tokens]
                     scores = [entropy_value for entropy_value,
                               _, _, _, _ in tree_entropy_tokens]
 
-                    # 使用分散采样选择最终的 token
+                    # use diverse sampling to select the final tokens
                     selected_indices = self.select_diverse_tokens(
                         token_indices,
                         scores,
                         N,
                     )
 
-                    # 将选中的 token 添加到扩展任务中
+                    # add the selected tokens to the expansion tasks
                     selected_tokens = []
                     for token_idx in selected_indices:
                         for item in tree_entropy_tokens:
-                            if item[4] == token_idx:  # item[4] 是 token_idx
+                            if item[4] == token_idx:  # item[4] is token_idx
                                 selected_tokens.append(item)
                                 break
 
@@ -288,10 +285,10 @@ class EntropyGuidedChainLocalManager:
                     ])
 
             if not expansion_tasks:
-                print("没有可扩展的节点，提前终止迭代。")
+                print("no expandable nodes, terminate the iteration.")
                 break
 
-            # 准备推理
+            # prepare the inference
             m_tree_top_n_prompt_ids = []
             task_mapping = {}
             for i, (tree_idx, node_idx, node, split_idx) in enumerate(expansion_tasks * T):
@@ -300,7 +297,7 @@ class EntropyGuidedChainLocalManager:
                 m_tree_top_n_prompt_ids.append(prompt_ids)
                 task_mapping[i] = (tree_idx, node_idx, node, split_idx)
 
-            # 批量执行推理
+            # batch execute the inference
             inference_results = query_local_vllm_ids_with_logprobs(
                 m_tree_top_n_prompt_ids,
                 llm=self.llm,
@@ -313,11 +310,11 @@ class EntropyGuidedChainLocalManager:
             if inference_results is None or inference_results[0] is None:
                 continue
 
-            # 处理结果，更新树结构
+            # process the results, update the tree structure
             for i, (content_token_ids, _, finish_reason, _, log_probs) in enumerate(zip(*inference_results)):
                 tree_idx, node_idx, parent_node, split_idx = task_mapping[i]
 
-                # 在 split_idx 处分裂当前节点
+                # split the current node at split_idx
                 new_node = TreeNode(
                     tree_idx=tree_idx,
                     node_idx=len(self.tree_lists[tree_idx]),
@@ -331,15 +328,15 @@ class EntropyGuidedChainLocalManager:
                     finish_reason=finish_reason
                 )
 
-                # 建立父子关系
+                # build the parent-child relationship
                 parent_node.add_child(new_node, split_idx)
 
-                # 将新节点添加到对应的树列表中
+                # add the new node to the corresponding tree list
                 self.tree_lists[tree_idx].append(new_node)
 
         eval_time_start = time.time()
 
-        # 评估结果
+        # evaluate the results
         # pass_k_result = []
         # for tree_list in self.tree_lists:
         #     for node in tree_list:
@@ -379,7 +376,7 @@ class EntropyGuidedChainLocalManager:
         # paths['eval_time_use'] = time.time() - eval_time_start
         # paths['time_use'] = time.time() - time_start
 
-        # 以上为串行评估，以下为并发评估
+        # above is serial evaluation, below is parallel evaluation
         eval_time_start = time.time()
         paths['pass_k_result'] = self.evaluate_trees(
             problem_str,
@@ -392,7 +389,7 @@ class EntropyGuidedChainLocalManager:
         print('eval_time_use: ',
               paths['eval_time_use'], '\ttime_use: ', paths['time_use'])
 
-        # 序列化树结构
+        # serialize the tree structure
         paths['tree_structures'] = [
             self.serialize_tree_list(tree_list) for tree_list in self.tree_lists
         ]
@@ -426,7 +423,7 @@ class EntropyGuidedChainLocalManager:
 
     def serialize_tree_list(self, tree_list):
         """
-        序列化单个树列表。
+        serialize the single tree list.
         """
         return [{
             'token_ids': node.token_id_list,
@@ -442,10 +439,10 @@ class EntropyGuidedChainLocalManager:
 
     def process_single_item(self, item: Dict[str, Any], args: Dict[str, Any]) -> Dict[str, Any]:
         """
-        处理单个数据项。
+        process the single data item.
 
-        :param item: 数据项，包含 'problem' 和 'golden_answer'。
-        :return: 处理后的路径和结果。
+        :param item: the data item, containing 'problem' and 'golden_answer'.
+        :return: the processed paths and results.
         """
         problem = item["problem"]
         answer = item["golden_answer"]
@@ -463,15 +460,15 @@ class EntropyGuidedChainLocalManager:
 
     def select_diverse_tokens(self, token_indices, scores, n):
         """
-        从 top-k 个 token 中选择最分散的 n 个 token
+        select the most diverse n tokens from the top-k tokens
 
         Args:
-            token_indices: 候选token的索引列表
-            scores: 对应的分数列表（熵值或概率）
-            upsampling_factor: 上采样倍数
+            token_indices: the list of candidate token indices
+            scores: the list of corresponding scores (entropy or probability)
+            upsampling_factor: the upsampling factor
 
         Returns:
-            selected_indices: 选中的token索引列表
+            selected_indices: the list of selected token indices
         """
         # n = len(token_indices) // upsampling_factor
         if n == 0:
@@ -479,27 +476,27 @@ class EntropyGuidedChainLocalManager:
 
         import numpy as np
 
-        # 将token_indices转换为numpy数组以便计算
+        # convert token_indices to numpy array for calculation
         tokens = np.array(token_indices)
 
-        # 初始化选择列表，先选择得分最高的token
-        selected = [0]  # 选择第一个token（得分最高的）
+        # initialize the selected list, select the token with the highest score first
+        selected = [0]  # select the first token (the highest score)
         remaining = list(range(1, len(tokens)))
 
-        # 选择剩余的tokens
+        # select the remaining tokens
         while len(selected) < n:
             max_min_dist = -float('inf')
             best_idx = -1
 
-            # 对于每个候选token
+            # for each candidate token
             for i in remaining:
-                # 计算与已选token的最小距离（使用token_id的差值的绝对值作为距离）
+                # calculate the minimum distance (use the absolute difference of token_id as distance)
                 min_dist = float('inf')
                 for j in selected:
                     dist = abs(int(tokens[i]) - int(tokens[j]))
                     min_dist = min(min_dist, dist)
 
-                # 如果这个token能提供更大的最小距离，就选择它
+                # if this token can provide a larger minimum distance, select it
                 if min_dist > max_min_dist:
                     max_min_dist = min_dist
                     best_idx = i
@@ -507,5 +504,5 @@ class EntropyGuidedChainLocalManager:
             selected.append(best_idx)
             remaining.remove(best_idx)
 
-        # 返回选中的token索引
+        # return the selected token indices
         return [token_indices[i] for i in selected]

@@ -396,26 +396,6 @@ def zero_pad_batch(sequences: List[torch.Tensor], side: str = "right", pad_token
     return torch.cat(padded_sequences, dim=0)
 
 
-# def _tokenize_fn_chatglm(tokenizer, prompt, history, max_length):
-#     input_ids = []
-#     if isinstance(history, str):
-#         history = json.loads(history)
-    
-#     if history:
-#         for item in history:
-#             input_ids.extend(tokenizer.build_single_message("user", "", item["prompt"]))
-#             input_ids.extend(tokenizer.build_single_message("assistant", "", item["response"]))
-    
-#     sample_input_ids = tokenizer.build_single_message("user", "", prompt)
-#     sample_input_ids = input_ids + sample_input_ids
-
-#     # sample_input_ids = sample_input_ids[-max_length:] \
-#         # + [tokenizer.get_command("<|assistant|>")] \
-#         # + tokenizer.encode("\n", add_special_tokens=False)
-#     sample_input_ids = sample_input_ids[-max_length:] + tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
-#     # sample = self.tokenizer.batch_encode_plus([sample_input_ids], return_tensors="pt", is_split_into_words=True)
-#     # return sample["input_ids"][0], sample["attention_mask"][0]
-#     return sample_input_ids
 def _tokenize_fn_chatglm(tokenizer, prompt, history, max_length):
     gmask = tokenizer.encode("[gMASK]")[0]
     sop = tokenizer.encode("<sop>")[0]
@@ -427,70 +407,17 @@ def _tokenize_fn_chatglm(tokenizer, prompt, history, max_length):
         for item in history:
             _prompt = tokenizer.encode("<|user|>\n" + item["prompt"], add_special_tokens=False)
             _response = tokenizer.encode("<|assistant|>\n" + item["response"], add_special_tokens=False)
-            # input_ids.extend(tokenizer.build_single_message("user", "", item["prompt"]))
-            # input_ids.extend(tokenizer.build_single_message("assistant", "", item["response"]))
+
             input_ids.extend(_prompt)
             input_ids.extend(_response)
-    # sample_input_ids = tokenizer.build_single_message("user", "", prompt)
+
     sample_input_ids = tokenizer.encode("<|user|>\n" + prompt, add_special_tokens=False)
     sample_input_ids = input_ids + sample_input_ids
-    # sample_input_ids = sample_input_ids[-max_length:] \
-        # + [tokenizer.get_command("<|assistant|>")] \
-        # + tokenizer.encode("\n", add_special_tokens=False)
-    # sample_input_ids = [gmask, sop] + 
+    
     sample_input_ids = sample_input_ids[-max_length:] + tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
-    # sample = self.tokenizer.batch_encode_plus([sample_input_ids], return_tensors="pt", is_split_into_words=True)
-    # return sample["input_ids"][0], sample["attention_mask"][0]
+
     return sample_input_ids
 
-
-# def _tokenize_fn_llama(tokenizer, prompt, history, max_length,system_prompt=None):
-#     conversation = []
-#     if system_prompt:
-#         conversation.append({"role": "system", "content": system_prompt})
-#     if history:
-#         for x in history:
-#             conversation.append({"role": "user", "content": x["prompt"]})
-#             conversation.append({"role": "assistant", "content": x["response"]})
-#     conversation.append({"role": "user", "content": prompt})
-#     sample_input_ids = tokenizer.apply_chat_template(conversation)
-#     sample_input_ids = sample_input_ids[-max_length:] + tokenizer.encode("<|im_start|>assistant\n")
-#     # 把sample_input_ids decode成文本
-#     # with open("/workspace/lurui/openrlhf-glm/logs/outputs/sample_input_ids.jsonl", "a") as f:
-#     #     str_input_ids = tokenizer.decode(sample_input_ids)
-#     #     f.write(json.dumps({"sequences":str_input_ids,"system_prompt":system_prompt}) + "\n")
-#     return sample_input_ids
-
-
-# def tokenize_fn_llama(tokenizer, texts, max_length, device,system_prompt=None):
-#     batch = [_tokenize_fn_llama(tokenizer, prompt=_prompt, history=_history, max_length=max_length,system_prompt=system_prompt) for _prompt, _history in zip(*texts)]
-
-#     batch_length = max([len(x) for x in batch])
-#     pad_token_id = tokenizer.pad_token_id
-#     max_length = min(max_length, batch_length)
-
-#     def batch_encode_plus(input_ids):
-#         sample_len = len(input_ids)
-#         if sample_len < max_length:
-#             attention_mask = [0] * (max_length - sample_len) + [1] * sample_len
-#             input_ids = [pad_token_id] * (max_length - sample_len) + input_ids
-#         else:
-#             attention_mask = [1] * max_length
-#         input_ids = torch.tensor(input_ids)
-#         attention_mask = torch.tensor(attention_mask)
-
-#         return {"input_ids": input_ids, "attention_mask": attention_mask}
-    
-#     # batch = [batch_encode_plus(x) for x in batch]
-#     try:
-#         batch = tokenizer.batch_encode_plus(batch, return_tensors="pt", is_split_into_words=True, padding=True)
-#     except:
-#         batch = [batch_encode_plus(x) for x in batch]
-#         batch = {
-#             "input_ids": torch.stack([x["input_ids"] for x in batch]),
-#             "attention_mask": torch.stack([x["attention_mask"] for x in batch]),
-#         }
-#     return {k: v.to(device) for k, v in batch.items()}
 
 import torch
 import json
@@ -523,18 +450,6 @@ def tokenize_fn_llama(tokenizer, texts, max_length, device,system_prompt=None,to
     pad_token_id = tokenizer.pad_token_id
     max_length = min(max_length, batch_length)
 
-    # def batch_encode_plus(input_ids):
-    #     sample_len = len(input_ids)
-        # if sample_len < max_length:
-        #     attention_mask = [0] * (max_length - sample_len) + [1] * sample_len
-        #     input_ids = [pad_token_id] * (max_length - sample_len) + input_ids
-        # else:
-        #     attention_mask = [1] * max_length
-        #     input_ids = torch.tensor(input_ids[:max_length])
-    #     input_ids = torch.tensor(input_ids)
-    #     attention_mask = torch.tensor(attention_mask)
-
-    #     return {"input_ids": input_ids, "attention_mask": attention_mask}
     def batch_encode_plus(input_ids, tokenize_type):
         sample_len = len(input_ids)
 
@@ -1175,17 +1090,6 @@ class NaiveExperienceMaker(ABC):
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
         returns = advantages + values
 
-        # if sequences is not None:
-        #     with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
-        #         match_list = []
-        #         num_actions = action_mask.size(1)
-        #         for i in range(advantages[0].shape[0]):
-        #             str_seq = self.tokenizer.decode([sequences[0][-num_actions+i].to("cpu").tolist()], skip_special_tokens=True)
-        #             match_list.append({"advantage":advantages[0][i].item(),"reward":rewards[0][i].item(),"values":values[0][i].item(),"content":str_seq})
-        #         f.write(json.dumps(match_list) + "\n")
-
-        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
-        #     f.write(json.dumps({"advantage":advantages.tolist(),"reward":rewards.tolist(),"values":values.tolist()}) + "\n")
         return advantages.detach(), returns
 
 
@@ -1533,16 +1437,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 
         for i in range(0, (micro_batch_size_roll_out * num_trace_per_sample), generate_batch_size):
             # start = time.time()
-            
-            # sequences, attention_mask, action_mask = (
-            #     self._generate_local(prompts, **generate_kwargs)
-            #     if self.vllm_engines is None
-            #     else self._generate_vllm(prompts, **generate_kwargs)
-            # )
-            # assert batch_size == int(sequences.shape[0]), f"len(prompts): {len(prompts)}---{len(prompts[0])}, sequences.shape[0]: {sequences.shape[0]}, {type(prompts)}, {prompts}"
-            # # print(f"sequences.shape: {sequences.shape}, num_prompts: {len(prompts)}")
-            # ### re-tokenize
-            
+
             if isinstance(prompts, list) and len(prompts) == 2:
                 batch_prompts = [
                     prompts[0][i: i + generate_batch_size], 
@@ -1631,11 +1526,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 # rewards
                 r_refs = []
                 for rm in self.reward_model:
-                    # if self.critic and self.strategy.args.critic_pretrain and (self.strategy.args.reward_pretrain != self.strategy.args.critic_pretrain):
-                        # micro_sequences_for_rm_cpu, micro_attention_mask_cpu_rm = self.retokenize(micro_sequences_for_rm_cpu, self.tokenizer, self.tokenizer_reward)
-                    # else:
-                    # micro_sequences_cpu_rm, micro_attention_mask_cpu_rm = micro_sequences_cpu, micro_attention_mask_cpu
-                    
+
                     micro_sequences_for_rm_cpu, micro_attention_mask_cpu_rm = micro_sequences_for_rm_cpu, micro_attention_mask_for_rm_cpu
 
                     r_refs.append(rm.forward.remote(micro_sequences_for_rm_cpu, micro_attention_mask_cpu_rm, True))
@@ -1737,24 +1628,10 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     else:
                         print(f"action_test_original: {self.tokenizer.decode(actions_restored[i][num_actions:].tolist(), skip_special_tokens=False)}----, tokens={actions_restored[i][num_actions:]}")
 
-                    # if item != self.tokenizer.pad_token_id:
-                        # print(f"\n--------------- actions_restored_badcase: ", self.tokenizer.decode(actions_restored[i].tolist(), skip_special_tokens=False).replace("<|endoftext|>", ""))
-                        # print(f"\n-------------- actions_badcase: ", self.tokenizer.decode(actions[i].tolist(), skip_special_tokens=False).replace("<|endoftext|>", ""))
-                        # break
-                # print(f"actions_restored_first: ", actions_restored[:, 0])
-                # print(f"actions_restored: ", actions_restored[:, num_actions-1])
 
             if process_rewards.shape[1] >= num_actions:
                 assert process_rewards.shape[1] <= num_actions, f"process_rewards: {process_rewards.shape}, num_actions: {num_actions}, actions_for_rm: {actions_for_rm.shape}, raw_process_rewards: {raw_process_rewards.shape}, actions_shape={actions_restored.shape}"
 
-                # for item_p, item_u in zip(process_rewards, unormalized_process_reward):
-                #     if (item_u[:num_actions] != 0).sum() == 0:
-                #         nonzero_index = (item_u != 0).nonzero().flatten()
-                #         if len(nonzero_index) > 0:
-                #             nonzero_index = nonzero_index[-1]
-                #             item_u[num_actions-1] = item_u[nonzero_index]
-                #             item_p[num_actions-1] = item_p[nonzero_index]
-                        
                 process_rewards = process_rewards[:, :num_actions]
                 unormalized_process_reward = unormalized_process_reward[:, :num_actions]
                 # for item in micro_process_reward:
@@ -1767,20 +1644,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             process_rewards = process_rewards[:, :max_length]
             actions_restored = actions_restored[:, :max_length]
                         
-        # assert ((unormalized_process_reward != 0).sum(1) > 0).all(), f"unormalized_process_reward: {unormalized_process_reward.sum(1)}"
-
-        # assert micro_process_reward.shape == micro_action_mask.shape, f"micro_process_reward: {micro_process_reward.shape}, micro_action_mask: {micro_action_mask.shape}"
-        
-        # advantage = zero_pad_batch(_advantage, side="right")
-        # returns = zero_pad_batch(_returns, side="right")
-        # kl = zero_pad_batch(_kl, side="right")
         rollout_time = time.time() - start_overall
 
-        # attention_mask = zero_pad_batch(_attention_mask, side="right")
-        # sequences = zero_pad_batch(_sequences, side="right", pad_token_id=self.tokenizer.pad_token_id)
-        # process_rewards = zero_pad_batch(_process_rewards, side="right")
-        # r = torch.cat(_raw_r, dim=0)
-        
         if self.critic:
             value = zero_pad_batch(_value, side="right")
         else:
@@ -1790,14 +1655,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
 
         assert ((_raw_reward != 0).sum(1) > 0).all()
 
-        # else:
-            # action_mask = actions_restored != self.tokenizer.pad_token_id
-            # sequence_prompts = [s[:-m.shape[0]] for s, m in zip(_sequences, action_mask)]
-            # sequence_prompts = zero_pad_batch(sequence_prompts, side="left", pad_token_id=self.tokenizer.pad_token_id)
-            # sequences = torch.cat([sequence_prompts, actions_restored], dim=1)
-            # attention_mask = (sequences != self.tokenizer.pad_token_id).float()
-            # atention_mask = 
-        
         return {
             "action_mask": action_mask,
             "attention_mask": attention_mask,
@@ -1847,21 +1704,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         
         start_overall = time.time()
         
-        # ---- standard implementation -----
-        # for _ in range(num_trace_per_sample):
-        #     start = time.time()
-            
-        #     sequences, attention_mask, action_mask = (
-        #         self._generate_local(prompts, **generate_kwargs)
-        #         if self.vllm_engines is None
-        #         else self._generate_vllm(prompts, **generate_kwargs)
-        #     )
-        #     assert batch_size == int(sequences.shape[0]), f"len(prompts): {len(prompts)}---{len(prompts[0])}, sequences.shape[0]: {sequences.shape[0]}, {type(prompts)}, {prompts}"
-        #     # print(f"sequences.shape: {sequences.shape}, num_prompts: {len(prompts)}")
-        # ------ standard implementation ------
-        
-        # ------ efficient implementation -----
-        # prompts = prompts * num_trace_per_sample
 
         batch_first = True
 
@@ -1966,13 +1808,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                             queries[i] = (question, answer)
                             new_data = {"prompt": question, "response": answer, "label": micro_labels[i]}
 
-                            # os.makedirs(os.path.dirname(file_name), exist_ok=True)
-                            # with open(file_name, "a") as f:
-                            #     f.write(json.dumps(new_data) + "\n")
-                            # with open("logs/outputs/queries.jsonl", "a") as f:
-                            #     f.write(json.dumps({"query": item, "label": micro_labels[i],"question":question,"answer":answer,"type":"multi-chain"}) + "\n")
-
-                            # raise NotImplementedError
                     assert len(queries) == len(micro_labels), f"query={len(queries)}, labels={len(labels)}"
                     # r_refs.append((queries, micro_labels))
                     r_refs_remote.append((queries, micro_labels))
@@ -2017,20 +1852,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     base_action_log_probs = base_action_log_probs.to(device)
                     value = None
                     # r = r_refs
-                        
-                # if self.reward_model:
-                #     if self.critic:
-                #         ref_values = ray.get([base_action_log_probs_ref, value_ref] + r_refs)
-                #         base_action_log_probs, value, rewards = ref_values[0], ref_values[1], ref_values[2:]
-                #         base_action_log_probs, value = base_action_log_probs.to(device), value.to(device)
-                #     else:
-                #         ref_values = ray.get([base_action_log_probs_ref] + r_refs)
-                #         base_action_log_probs, rewards = ref_values[0], ref_values[1:]
-                #         base_action_log_probs = base_action_log_probs.to(device)
-                #         value = None
-                #         rewards = [r.to(device) for r in rewards]
-                #         r = self.reward_fn(rewards) if len(rewards) > 0 else rewards[0]
-                    
+
                 wait_time = time.time() - start
 
 
@@ -2112,54 +1934,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             
             print(f"--------******* num_queries: {len(queries)}, num_labels: {len(labels)}, length_ratio: {overlong_mask.sum() / overlong_mask.numel()}")
             
-
-            ### old implementation
-            # if _sources is None:
-            #     _sources = ["stem"] * len(queries)    
-
-            # _raw_r_remote = [item for sublist in _raw_r_remote for item in sublist]
-            # queries = [item for sublist in _raw_r_remote for item in sublist[0]]
-            # labels = [item for sublist in _raw_r_remote for item in sublist[1]]
-            # _remote_rm_urls = load_reward_url(self.remote_reward_url[0])
-            
-            # print(f"--------******* num_queries: {len(queries)}, num_labels: {len(labels)}, length_ratio: {overlong_mask.sum() / overlong_mask.numel()}")
-
-            # assert len(queries) == len(labels)
-            # extracted_answer, raw_remote_rewards = _remote_binary_judge_evaluation(_remote_rm_urls, queries, labels)
-            # raw_remote_rewards = raw_remote_rewards.to(torch.cuda.current_device())
-            # binary_reward = raw_remote_rewards
-
-            # if len(self.remote_reward_url) > 1:
-            #     _remote_model_rm_urls = load_reward_url(self.remote_reward_url[1])
-            #     queries4rm = []
-            #     for item in queries:
-            #         inp_len = self.tokenizer.encode(item[0], add_special_tokens=False) 
-            #         oup_len =  self.tokenizer.encode(item[1], add_special_tokens=False)
-            #         length = inp_len + oup_len
-            #         max_len = 8050
-
-            #         if length > max_len:
-            #             queries4rm.append(
-            #                 (
-            #                     item[0], 
-            #                     self.tokenizer.decode(self.tokenizer.encode(item[1], add_special_tokens=False)[-(max_len - inp_len):])
-            #                 )
-            #             )
-            #         else:
-            #             queries4rm.append((item[0], item[1]))
-
-            #     rm_based_rewards = _remote_reward_model_evaluation(_remote_model_rm_urls, queries4rm)
-            #     rm_based_rewards = rm_based_rewards.to(torch.cuda.current_device())
-            #     # rm_based_rewards = torch.sigmoid(0.5 * rm_based_rewards)
-            #     rm_based_rewards = torch.sigmoid(rm_based_rewards)
-            #     raw_remote_rewards = raw_remote_rewards + rm_based_rewards
-
-            # if self.strategy.args.use_rule_based_reward:
-            #     rule_rewards = get_rule_base_rewards(queries, use_expected_pattern=True)
-            #     rule_rewards = rule_rewards.to(torch.cuda.current_device())
-            #     raw_remote_rewards = raw_remote_rewards + rule_rewards
-            #### old implementation
-
             r_remote = raw_remote_rewards
             if self.strategy.get_rank() <= 3:
                 # print the first sample and result
@@ -2220,19 +1994,10 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 )   
                 
         if self.strategy.args.mask_repeated_samples:
-            # mask 掉重复的样本
             r_min = r.min().item()
             print("repeated_mask",repeated_mask.shape,"r",r.shape)
             # r[repeated_mask == 0] = r_min - 1
             r[repeated_mask == 0] = -1
-            # mask 掉 entropy 过大的样本
-            # response_entropy = -(action_log_probs * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
-            # print("response_entropy and action_log_probs",response_entropy.shape,action_log_probs.shape,response_entropy)
-            # entropy_mask_threshold = generate_kwargs.get("entropy_mask_threshold", 1)
-            # print("entropy_mask_threshold",entropy_mask_threshold)
-            # r[response_entropy > entropy_mask_threshold] = r_min - 1
-            
-            
 
         if self.remote_reward_url:
             assert batch_first, f"batch_first must be set to True: {batch_first}"
@@ -2242,11 +2007,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             else:
                 judge_rwd = torch.tensor(binary_reward).view(-1, num_trace_per_sample)
                 
-                # if batch_first:
-                # judge_rwd = judge_rwd.view(batch_size, num_trace_per_sample)
-                # else:
-                    # judge_rwd = binary_reward.view(num_trace_per_sample, batch_size).transpose(0, 1)
-                # margin = 0.1 if self.strategy.args.use_rule_based_reward else 0
                 margin = 0
                 pass_rate = ((judge_rwd > margin).sum(1) > 0).float()
                 pass_rate = pass_rate.repeat(batch_size * num_trace_per_sample)[:batch_size * num_trace_per_sample]
@@ -2472,19 +2232,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     base_action_log_probs = base_action_log_probs.to(device)
                     value = None
                     # r = r_refs
-                        
-                # if self.reward_model:
-                #     if self.critic:
-                #         ref_values = ray.get([base_action_log_probs_ref, value_ref] + r_refs)
-                #         base_action_log_probs, value, rewards = ref_values[0], ref_values[1], ref_values[2:]
-                #         base_action_log_probs, value = base_action_log_probs.to(device), value.to(device)
-                #     else:
-                #         ref_values = ray.get([base_action_log_probs_ref] + r_refs)
-                #         base_action_log_probs, rewards = ref_values[0], ref_values[1:]
-                #         base_action_log_probs = base_action_log_probs.to(device)
-                #         value = None
-                #         rewards = [r.to(device) for r in rewards]
-                #         r = self.reward_fn(rewards) if len(rewards) > 0 else rewards[0]
                     
                 wait_time = time.time() - start
 
@@ -2599,31 +2346,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
 
         assert not (self.strategy.args.normalize_reward_from_multi_traces_with_rloo and self.strategy.args.normalize_reward_from_multi_traces), f"normalize_reward_from_multi_traces_with_rloo and normalize_reward_from_multi_traces cannot be set to True at the same time"
         print("num_trace_per_sample",num_trace_per_sample,)
-            
-        # if num_trace_per_sample > 1: # and not self.remote_reward_url:
-        #     div_std = not getattr(self.strategy.args, "normalize_reward_mean_only", False)
 
-        #     if self.strategy.args.normalize_reward_from_multi_traces:
-        #         r = normalize_reward_from_multi_traces(
-        #             r, 
-        #             batch_size, 
-        #             num_trace_per_sample,
-        #             min_threshold=getattr(self.strategy.args, "min_reward_gap", 0.0),
-        #             batch_first=batch_first,
-        #             div_std=div_std,
-        #             mask=repeated_mask
-        #         )
-        #     if self.strategy.args.normalize_reward_from_multi_traces_with_rloo:
-        #         pass
-        #         # r = normalize_reward_from_multi_traces_rloo_mcts_mask(
-        #         #     r, 
-        #         #     raw_remote_rewards_attention_mask,
-        #         #     min_threshold=getattr(self.strategy.args, "min_reward_gap", 0.0),
-        #         #     batch_first=batch_first,
-        #         #     mask=repeated_mask
-        #         #     # div_std=div_std   
-        #         # )   
-                
         if self.strategy.args.mask_repeated_samples:
             # r = r * repeated_mask
             # r_min = r.min().item()
@@ -2634,13 +2357,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             else:
                 print("repeated_mask", repeated_mask.shape,"r", r.shape)
                 r[repeated_mask == 0] = -1
-
-            # response_entropy = -(action_log_probs * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
-            # print("response_entropy and action_log_probs",response_entropy.shape,action_log_probs.shape,response_entropy)
-            # entropy_mask_threshold = generate_kwargs.get("entropy_mask_threshold", 1)
-            # print("entropy_mask_threshold",entropy_mask_threshold)
-            # r[response_entropy > entropy_mask_threshold] = r_min - 1
-
 
         if self.remote_reward_url:
             # 创建一个和r一样形状的pass_rate,每个数据都是pass_rate
@@ -3109,25 +2825,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
 
             _base_action_log_probs.append(base_action_log_probs)
 
-            # reward, kl = compute_reward(
-            #     r,
-            #     self.kl_ctl.value,
-            #     action_log_probs,
-            #     base_action_log_probs,
-            #     action_mask=action_mask,
-            # )
-
-            # advantage, returns = self.get_advantages_and_returns(
-            #     value,
-            #     reward,
-            #     action_mask,
-            #     generate_kwargs["gamma"],
-            #     generate_kwargs["lambd"],
-            # )
-            
-            # _advantage.append(advantage)
-            # _returns.append(returns)
-
             _attention_mask.append(attention_mask)
             _action_mask.append(action_mask)
             _value.append(value)
@@ -3144,10 +2841,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         overall_time = time.time() - start_overall
 
         action_mask = zero_pad_batch(_action_mask, side="right")
-        # advantage = zero_pad_batch(_advantage, side="right")
-        # returns = zero_pad_batch(_returns, side="right")
-        # kl = zero_pad_batch(_kl, side="right")
-
         attention_mask = zero_pad_batch(_attention_mask, side="right")
         value = zero_pad_batch(_value, side="right")
         sequences = zero_pad_batch(_sequences, side="right")
@@ -3523,7 +3216,12 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             system_prompt = kwargs.get("system_prompt",None)
             print("use mcts not entropy")
             if "glm" in self.current_model.lower():
-                args = {"temperature": kwargs.get("temperature", 1.2), "top_p": kwargs.get("top_p", 0.9), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "min_children": 4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_value_only":kwargs.get("use_value_only",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False),"average_one_generation":kwargs.get("average_one_generation",False),"advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),"use_weighted_value": kwargs.get("use_weighted_value", False),"a": kwargs.get("a_coeff", 0.5),"b": -b_mean,"use_all_terminals":kwargs.get("use_all_terminals", False)}
+                args = {
+                    "temperature": kwargs.get("temperature", 1.2), 
+                    "top_p": kwargs.get("top_p", 0.9), 
+                    "max_depth": 40, 
+                    "max_nodes": kwargs.get("max_nodes", 256), 
+                    "max_children": 4, "min_children": 4, "shallow_enwide":False, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_value_only":kwargs.get("use_value_only",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False),"average_one_generation":kwargs.get("average_one_generation",False),"advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),"use_weighted_value": kwargs.get("use_weighted_value", False),"a": kwargs.get("a_coeff", 0.5),"b": -b_mean,"use_all_terminals":kwargs.get("use_all_terminals", False)}
             else:
                 args = {
                     "temperature": kwargs.get("temperature", 1.2), 
@@ -3537,7 +3235,31 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     "prompt_key": "problem", 
                     "answer_key": "golden_answer", 
                     "backbone": "qwen", "pass_k": num_trace_per_sample, 
-                    "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": kwargs.get("first_token_temperature", 0), "look_ahead": 0, "concurrent_num": 8, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True),"use_orm_reward":kwargs.get("use_orm_reward", False),"select_correct_leaf":kwargs.get("select_correct_leaf", False),"use_chain_reward":kwargs.get("use_chain_reward",False),"use_state_value_reward":kwargs.get("use_state_value_reward",False),"use_value_only":kwargs.get("use_value_only",False),"use_pure_RM":kwargs.get("use_pure_RM",False),"use_pure_binary":kwargs.get("use_pure_binary",False),"average_one_generation":kwargs.get("average_one_generation",False),"advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),"use_weighted_value": kwargs.get("use_weighted_value", False),"a": kwargs.get("a_coeff", 0.5),"b": -b_mean,"use_all_terminals":kwargs.get("use_all_terminals", False)}
+                    "backprop": 0, 
+                    "max_node_per_depth": kwargs.get("max_node_per_depth", 18), 
+                    "first_token_temperature": kwargs.get("first_token_temperature", 0), 
+                    "look_ahead": 0, 
+                    "concurrent_num": 8, 
+                    "path_num": num_trace_per_sample,
+                    "prompt_max_len": 1024,
+                    "max_token_num": kwargs.get("max_new_tokens", 4096),
+                    "max_time_use": kwargs.get("max_time_use", 360), 
+                    "step_level_norm": kwargs.get("step_level_norm", False),
+                    "random_pick": kwargs.get("random_pick", True),
+                    "use_orm_reward": kwargs.get("use_orm_reward", False),
+                    "select_correct_leaf": kwargs.get("select_correct_leaf", False),
+                    "use_chain_reward": kwargs.get("use_chain_reward", False),
+                    "use_state_value_reward": kwargs.get("use_state_value_reward", False),
+                    "use_value_only": kwargs.get("use_value_only", False),
+                    "use_pure_RM": kwargs.get("use_pure_RM", False),
+                    "use_pure_binary": kwargs.get("use_pure_binary", False),
+                    "average_one_generation": kwargs.get("average_one_generation", False),
+                    "advantage_mix_allancestor": kwargs.get("advantage_mix_allancestor", False),
+                    "use_weighted_value": kwargs.get("use_weighted_value", False),
+                    "a": kwargs.get("a_coeff", 0.5),
+                    "b": -b_mean,
+                    "use_all_terminals":kwargs.get("use_all_terminals", False)
+                }
             print("mcts args:",args)
             
             def decode_fn(ids):
@@ -3545,18 +3267,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
 
             paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, decode_fn, args,system_prompt=system_prompt)
         assert paths is not None, f"paths is None, prompts: {prompts}"
-        # print("paths:",paths)
 
-        # os.makedirs("/workspace/lurui/openrlhf-glm/logs/outputs",exist_ok=True)
-        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/treepath_entropy_new.jsonl", "a") as f:
-        #     # f.write(json.dumps({"paths":paths,"problem":prompts[0]}) + "\n")
-        #     paths_log = []
-        #     for p in paths:
-        #         p_log = []
-        #         for node in p:
-        #             p_log.append({"value":node["value"],"state_value":node["state_value"],"pass_ratio":node["pass_ratio"]})
-        #         paths_log.append(p_log)
-        #     f.write(json.dumps({"paths":paths_log}) + "\n")
             
         # NOTE: concat all outputs to following format:
         #
@@ -3720,12 +3431,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         sequences, attention_mask, action_mask = self.actor.process_sequences(
             sequences, max_input_len, eos_token_id, pad_token_id
         )
-        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/action_mask.jsonl","a") as f:
-        #     match_list = []
-        #     for i in range(sequences[0].shape[0]):
-        #         str_seq = self.tokenizer.decode([sequences[0][i].to("cpu").tolist()], skip_special_tokens=True)
-        #         match_list.append({"action_mask":action_mask[0][i].item(),"reward":seq_rewards[i].item(),"values":seq_values[0][i].item(),"content":str_seq})
-        #     f.write(json.dumps(match_list) + "\n")
+
         overlong_mask = torch.tensor(overlong).to("cuda") # 1 for long, 0 for short
         print("seq_rewards",seq_rewards.shape,sequences.shape,attention_mask.shape,action_mask.shape,overlong_mask.shape,correct_terminal,correct_terminal_count/total_terminals)
         return sequences.to("cuda"), seq_rewards.to("cuda"), seq_values.to("cuda"),attention_mask.to("cuda"), action_mask.to("cuda"), overlong_mask,correct_terminal,correct_terminal_count/total_terminals
@@ -3749,7 +3455,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         item = {"problem": prompts[0], "golden_answer": prompts[2]}
         assert prompts[2] is not None, f"labels is None, prompts: {prompts}"
 
-        # args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": 256, "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": 18, "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":360,"step_level_norm":False,"random_pick":True}
         args = {"temperature": kwargs.get("temperature", 1.0), "top_p": kwargs.get("top_p", 1.0), "max_depth": 40, "max_nodes": kwargs.get("max_nodes", 256), "max_children": 4, "exploration_constant": 0.5, "prompt_key": "problem", "answer_key": "golden_answer", "backbone": "glm", "pass_k": num_trace_per_sample, "backprop": 0, "max_node_per_depth": kwargs.get("max_node_per_depth", 18), "first_token_temperature": 0, "look_ahead": 0, "concurrent_num": 4, "path_num": num_trace_per_sample,"prompt_max_len":1024,"max_token_num":kwargs.get("max_new_tokens", 4096),"max_time_use":kwargs.get("max_time_use", 360),"step_level_norm":kwargs.get("step_level_norm", False),"random_pick":kwargs.get("random_pick", True)}
         
         paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, args)

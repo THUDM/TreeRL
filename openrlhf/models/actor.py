@@ -59,15 +59,6 @@ class Actor(nn.Module):
             else:
                 dschf = None
 
-            # if load_in_4bit:
-            #     assert bf16, "we only support bnb_4bit_compute_dtype = bf16"
-            #     nf4_config = BitsAndBytesConfig(
-            #         load_in_4bit=True,
-            #         bnb_4bit_quant_type="nf4",
-            #         bnb_4bit_use_double_quant=True,
-            #         bnb_4bit_compute_dtype=torch.bfloat16,
-            #     )
-            # else:
             nf4_config = None
 
             print(f"########## loading actor model from: {pretrain_or_model} ##########")
@@ -89,30 +80,6 @@ class Actor(nn.Module):
                     torch_dtype="auto",
                     empty_init=False,
                 )
-
-            # LoRA
-            # if lora_rank > 0:
-            #     # https://github.com/huggingface/peft/issues/137
-            #     self.model.enable_input_require_grads()
-            #     lora_config = LoraConfig(
-            #         task_type=TaskType.CAUSAL_LM,
-            #         r=lora_rank,
-            #         lora_alpha=lora_alpha,
-            #         target_modules=target_modules or find_all_linear_names(self.model, load_in_4bit),
-            #         lora_dropout=0,
-            #         bias="none",
-            #     )
-            #     self.model = get_peft_model(self.model, lora_config)
-
-            #     if load_in_4bit:
-            #         for name, module in self.model.named_modules():
-            #             if isinstance(module, LoraLayer):
-            #                 module = module.to(torch.bfloat16)
-            #             if "norm" in name:
-            #                 module = module.to(torch.float32)
-            #             if "lm_head" in name or "embed_tokens" in name:
-            #                 if hasattr(module, "weight"):
-            #                     module = module.to(torch.bfloat16)
 
             # Mixtral 8x7b - balancing loss
             if "output_router_logits" in self.model.config.to_dict():

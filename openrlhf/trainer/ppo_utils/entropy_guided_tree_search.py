@@ -158,37 +158,14 @@ def process_single_data_for_each_gpu(data_batch, gpu_id, tokenizer_path, evaluat
 
         result = manager.process_single_item(item, args)
 
-        # if output_file:
-        #     lock = FileLock(f"{output_file}.lock")
-        #     with lock:
-        #         with open(output_file, "a", encoding="utf-8") as f:
-        #             json.dump(result, f, ensure_ascii=False)
-        #             f.write("\n")
-        # if output_file:
-        #     with open(output_file, "a", encoding="utf-8") as f:
-        #         json.dump(result, f, ensure_ascii=False)
-        #         f.write("\n")
-
 
 if __name__ == '__main__':
     # RL 调用参数
-    # MODEL_PATH = "/data/o1-cloud/checkpoints/sft/glm_9b_1102"
-
-    # MODEL_PATH = "/data/share/checkpoint/glm-o1-2w-sft"
-    MODEL_PATH = "/data/o1-cloud/checkpoints/rl/qwen-14b-general-removehistory/epoch_1"
+    MODEL_PATH = "qwen-2.5-14b-instruct"
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_PATH,
         trust_remote_code=True
     )
-
-    # def tokenize_fn(texts, max_length=2048, device="cpu", system_prompt=None):
-    #     sample_input_ids = tokenizer.encode(
-    #         "[gMASK]<sop><|user|>\n" + texts[0][0],
-    #         add_special_tokens=False
-    #     )
-    #     sample_input_ids = sample_input_ids[-max_length:] + \
-    #         tokenizer.encode("<|assistant|>\n", add_special_tokens=False)
-    #     return sample_input_ids
 
     import torch
 
@@ -202,49 +179,14 @@ if __name__ == '__main__':
 
     def decode_fn(ids):
         return tokenizer.decode(ids, skip_special_tokens=False)
-
-    # item = {
-    #     "problem": "The graph of $$x^4=x^2 y^2$$ is a union of $$n$$ different lines. What is the value of $$n$$ ?",
-    #     "golden_answer": "3"
-    # }
-    # llm = LLM(
-    #     model=MODEL_PATH,
-    #     tensor_parallel_size=1,
-    #     trust_remote_code=True,
-    #     seed=3407
-    # )
-    # args = {
-    #     "temperature": 1.2,
-    #     "top_p": 0.9,
-    #     "m": 8,
-    #     "n": 4,
-    #     "l": 2,
-    #     "evaluator_urls": ["http://172.18.75.109:8000/v1"],
-    #     "extractor_urls": ["http://172.18.75.109:8000/v1"],
-    #     # "eos_tokens": ["<|user|>", "<|endoftext|>", "<|observation|>"],
-    #     "eos_tokens": [151329, 151336, 151338],
-    #     "num_traces": 32,
-    #     "entropy_rm_urls": ["http://172.18.73.102:8000/v1"],
-    #     "use_pure_binary" : True,
-    #     "use_pure_RM" : False,
-    #     "use_orm_reward" : False,
-    #     "use_chain_reward" : False,
-    #     "step_level_norm" : True,
-    #     "use_state_value_reward" :False,
-    # }
-    # paths = parallel_entropy_guided_tree(item, llm, args, tokenize_fn, decode_fn)
-    # with open("/workspace/lurui/openrlhf-mcts/data/entropy_paths.jsonl","w",encoding="utf-8") as f:
-    #     json.dump({"path":paths},f,ensure_ascii=False)
-
     # 以下是用于本地评测 omnimath-500 passrate 的代码
-    eval_path = "/workspace/lurui/openrlhf-glm-data/general_and_math_2-1_mix.jsonl"
+    eval_path = "general_eval.jsonl"
     output_file = "./res/output_6_2_1_2.jsonl"
-    # tokenizer_path = "/data/share/checkpoint/glm-o1-2w-sft"
+
     tokenizer_path = MODEL_PATH
     evaluator_urls = ["http://172.18.74.194:8000/v1"]
     extractor_urls = ["http://172.18.75.153:8000/v1"]
-    # eos_tokens = [151329, 151336, 151338]
-    # eos_tokens = ["<|user|>", "<|endoftext|>", "<|observation|>"]
+
     eos_tokens = ["<|im_end|>"]
 
     # Read input data

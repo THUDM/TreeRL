@@ -86,26 +86,6 @@ class ReinforcePolicyLoss(nn.Module):
         super().__init__()
         self.clip_eps = clip_eps
 
-    # def forward(
-    #     self,
-    #     log_probs: torch.Tensor,
-    #     old_log_probs: torch.Tensor,
-    #     rewards: torch.Tensor,
-    #     action_mask: Optional[torch.Tensor] = None,
-    #     kl: Optional[torch.Tensor] = None,
-    #     kl_coef: float = 0.0,
-    # ) -> torch.Tensor:
-    #     ratio = (log_probs - old_log_probs).exp()
-    #     surr1 = ratio * rewards
-    #     surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * rewards
-    #     loss = -torch.min(surr1, surr2)
-
-    #     # if kl_coef > 0 and kl is not None:
-    #         # loss = loss + kl_coef * kl
-    #     loss = masked_mean(loss, action_mask, dim=-1).mean()
-    #     return loss
-
-
     def forward(
         self,
         log_probs: torch.Tensor,
@@ -115,32 +95,12 @@ class ReinforcePolicyLoss(nn.Module):
         kl: Optional[torch.Tensor] = None,
         kl_coef: float = 0.0,
     ) -> torch.Tensor:
-        # -- Implementation 1
-        # ratio = (log_probs - old_log_probs).exp().detach()
-        # ratio = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps)
-        # rewards = ratio * rewards
-        # loss = -rewards * log_probs
-        # loss = masked_mean(loss, action_mask, dim=-1).mean()
-
-        # -- Implementation 2
-        # ratio = (log_probs - old_log_probs).exp()
-        # advantages = masked_mean(rewards, action_mask, dim=-1)
-        # log_prob_diff = masked_mean(log_probs, action_mask, dim=-1) - masked_mean(old_log_probs, action_mask, dim=-1)
-        # ratio = log_prob_diff.exp()
-        # surr1 = ratio * advantages
-        # surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * advantages
-        # loss = -torch.min(surr1, surr2)
-        # loss = loss.mean()
-        
-        # -- original implementation
         ratio = (log_probs - old_log_probs).exp()
         # log_probs = log_probs.clamp(min=-5)
 
         surr1 = ratio * rewards
         surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps * 1.3) * rewards
         loss = -torch.min(surr1, surr2)
-        # if kl_coef > 0 and kl is not None:
-            # loss = loss + kl_coef * kl
         loss = masked_mean(loss, action_mask, dim=-1).mean()
 
         return loss

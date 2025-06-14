@@ -1,0 +1,7 @@
+{
+    "stem_model": ["http://127.0.0.1:8080/generate"],
+    "stem": ["http://127.0.0.1:8080/generate"],
+    "math_checker":["http://127.0.0.1:8000/v1"],
+    "math":["http://127.0.0.1:8000/v1"]
+  }
+  

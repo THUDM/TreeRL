@@ -27,8 +27,6 @@ share/python-wheels/
 *.egg
 data/
 log/
-run_scripts/
-scripts/
 draw/
 auto_eval/
 MANIFEST
@@ -162,14 +160,8 @@ tools/*
 configs/*
 
 checkpoints/*
-reward/*
-datasets/*
 logs/*
 
-auto_upload/*
-auto_eval/*
-openrlhf/trainer/ppo_utils/configs
-scripts_local
 scripts# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -1,3 +1,4 @@
+from typing import List
 import math
 import random
 import requests
@@ -357,62 +358,9 @@ def check_result(
         return None, 0
     check = check_equality(answer, label, urls=checker_urls)
     print("===", check, "===", answer, label)
-    # with open("/workspace/lurui/openrlhf-glm/logs/outputs/checker_mcts.jsonl", "a") as f:
-    # f.write(json.dumps({"question": question, "response": response,
-    # "extracted_answer": answer, "label": label, "check": check}) + "\n")
+
     return answer, 1 if check else 0
 
-
-# def query_local_vllm_completions_ids(
-#     prompt_token_ids,
-#     llm,
-#     n=1,
-#     skip_special_tokens=True,
-#     max_tokens=2048,
-#     stops=None,
-#     temperature=0.9,
-#     top_p=0.9,
-#     min_tokens = 0,
-#     model = "glm"
-# ):
-
-#     sampling_params = SamplingParams(
-#         temperature=temperature,
-#         top_p=top_p,
-#         max_tokens=max_tokens,
-#         min_tokens = min_tokens,
-#         skip_special_tokens = skip_special_tokens,
-#         stop = stops,
-#         # seed = random.randint(0, 100000),
-#         n = n,
-#     )
-
-#     content_list = []
-#     finish_reason_list = []
-#     stop_token_list = []
-#     token_num_list = []
-
-#     for try_counter in range(RETRY_COUNT):
-#         try:
-#             outputs = ray.get(llm.generate.remote(sampling_params=sampling_params, prompt_token_ids=prompt_token_ids))
-#             content_token_list = [[outs.token_ids for outs in output.outputs] for output in outputs]
-#             content_str_list = [[outs.text for outs in output.outputs] for output in outputs]
-#             finish_reason_list = [[outs.finish_reason for outs in output.outputs] for output in outputs]
-#             stop_token_list = [[outs.stop_reason for outs in output.outputs] for output in outputs]
-#             token_num_list = [[len(outs.token_ids) for outs in output.outputs] for output in outputs]
-#             # print("===stop_token===\n", stop_token_list)
-#             # pdb.set_trace()
-
-#             return content_token_list, content_str_list, finish_reason_list, stop_token_list ,token_num_list
-
-#         except Exception as e:
-#             sleep_time = 2 * try_counter + 1
-#             if sleep_time > 30:
-#                 exit(1)
-#             print(f"Error: {str(e)}, sleeping for {sleep_time} seconds")
-#             time.sleep(sleep_time)
-
-#     return None, None, None, None, None
 
 def query_local_vllm_completions_ids(
     prompt_token_ids,
@@ -614,49 +562,6 @@ def generate_logits(urls, user_query, assistant_response):
     response = send_request(user_query, assistant_response)
     return parse_response(response)
 
-## math-RM
-
-# def apply_chat_template_qwen(system_prompt, user, assistant):
-#     return f"<|im_start|>system\n{system_prompt}.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>"
-
-
-# def get_qwen_remote_reward_model_value(urls, question, response):
-#     # global count
-#     # count +=1
-#     # print(count)
-#     url = random.choice(urls)
-#     # print(url)
-
-#     client = OpenAI(
-#         api_key="EMPTY",
-#         base_url=url,
-#     )
-
-#     system_prompt = "Please reason step by step."
-#     # if len(question) + len(response) > 4096:
-#     #     response = response[:4096 - len(question)]
-
-#     conversation_str = apply_chat_template_qwen(
-#         system_prompt, question, response)
-#     # print(conversation_str)
-
-#     for _ in range(3):
-#         try:
-#             # if True:
-#             responses = client.embeddings.create(
-#                 input=[conversation_str],
-#                 model="Qwen72BRM",
-#             )
-
-#             for data in responses.data:
-#                 # print("qwen rm data", float(data.embedding[-1]))
-#                 return float(data.embedding[-1])
-#         except Exception as e:
-#             print(e)
-#             print("-- error in rm requests", url)
-#             continue
-#     return 0
-
 # general-math-code-RM
 import random
 import requests
@@ -682,8 +587,6 @@ def get_qwen_remote_reward_model_value(urls, question, response):
             print(e, "-- error in rm requests", url,response,data)
             continue
     return 0
-
-# get_qwen_remote_reward_model_value(["http://172.20.65.240:8000/v1"], "What is the value of $x$ in the equation $2x + 3 = 7$?", "The value of $x$ in the equation $2x + 3 = 7$ is $x = 2$.")
 
 
 def query_tgi_get_first_token(prompt, urls):

@@ -139,56 +139,6 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
     @torch.no_grad()
     def make_experience(self, prompts: Union[str, List[str]], use_mcts, use_vinevalue, use_sentence_level_value, **generate_kwargs) -> Experience:
         self.actor.eval()
-        # device = torch.cuda.current_device()
-
-        # num_trace_per_sample = getattr(self.strategy.args, "num_trace_per_sample", 1)
-        # if num_trace_per_sample > 1:
-        #     prompts = prompts * num_trace_per_sample
-        
-        # # generate sequence
-        # start = time.time()
-        # sequences, attention_mask, action_mask = (
-        #     self._generate_local(prompts, **generate_kwargs)
-        #     if self.vllm_engines is None
-        #     else self._generate_vllm(prompts, **generate_kwargs)
-        # )
-        # generate_time = time.time() - start
-
-        # num_actions = action_mask.size(1)
-        # sequences_cpu, attention_mask_cpu = (
-        #     sequences.to("cpu"),
-        #     attention_mask.to("cpu"),
-        #     # action_mask.to("cpu"),
-        # )
-
-        # # init log probs
-        # base_action_log_probs_ref = self.initial_model.forward.remote(sequences_cpu, num_actions, attention_mask_cpu)
-
-        # # rewards
-        # r_refs = []
-        # for rm in self.reward_model:
-        #     r_refs.append(rm.forward.remote(sequences_cpu, attention_mask_cpu))
-
-        # # log probs
-        # start = time.time()
-        # action_log_probs = self.actor(sequences, num_actions, attention_mask)
-        # actor_time = time.time() - start
-
-        # # wait initial/critic/reward model done
-        # start = time.time()
-        # ref_values = ray.get([base_action_log_probs_ref] + r_refs)
-        # wait_time = time.time() - start
-
-        # base_action_log_probs, rewards = ref_values[0], ref_values[1:]
-        # base_action_log_probs = base_action_log_probs.to(device)
-        # rewards = [r.to(device) for r in rewards]
-        # r = self.reward_fn(rewards) if len(rewards) > 0 else rewards[0]
-        # use_mcts = getattr(generate_kwargs, "use_mcts", 1)
-        # use_vinevalue = getattr(generate_kwargs, "use_vinevalue", 0)
-        print("use_mcts", use_mcts)
-        print("use_vinevalue", use_vinevalue)
-        print("file_name", str(getattr(self.strategy.args, "wandb_run_name", "test"))+ ".jsonl")
-
         if use_mcts:
             if use_vinevalue:
                 experiences = self.sample_responses_bymcts_use_vinevalue(
@@ -263,10 +213,6 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
                 process_reward=self.strategy.args.process_supervision
             )
         print("final kl shape",kl.shape,"final sequence shape",experiences["sequences"].shape)
-        # sample_kl = (kl.abs() * action_mask).sum(1) / action_mask.sum(1)
-        # sample_kl_mask = (sample_kl <= 0.3).view(-1, 1).float()
-        # reward = reward * sample_kl_mask
-        # reward = reward.clamp(min=-0.5)
 
         # * debuging
         if self.strategy.get_rank() == 0:
@@ -285,15 +231,7 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
             return piece
 
         response_entropy = -(experiences["action_log_probs"] * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)
-        # with open("/workspace/lurui/openrlhf-glm/logs/outputs/advantage.jsonl","a") as f:
-        #     sequences = experiences["sequences"]
-        #     num_actions = action_mask.size(1)
-        #     for s in range(sequences.shape[0]):
-        #         match_list = []
-        #         for i in range(reward[0].shape[0]):
-        #             str_seq = self.tokenizer.decode([sequences[s][-num_actions+i].to("cpu").tolist()], skip_special_tokens=True)
-        #             match_list.append({"reward":reward[s][i].item(),"content":str_seq})
-        #         f.write(json.dumps(match_list) + "\n")
+
         
         if use_vinevalue:
             info = {
@@ -343,10 +281,6 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
         if self.strategy.args.perf:
             info = self.log_perf(info, experiences, getattr(self.strategy.args, "num_trace_per_sample", 1))
 
-        # mask loss for eos_token
-        # eos_indices = action_mask.float().shape[1] - 1 - action_mask.float().fliplr().argmax(dim=1)
-        # mask = torch.arange(action_mask.size(1), device=action_mask.device).unsqueeze(0) == eos_indices.unsqueeze(1)
-        # reward = torch.where((reward < 0) * mask, torch.zeros_like(reward), reward)
         if use_vinevalue:
             experience = Experience(
                 sequences=experiences["sequences"],
